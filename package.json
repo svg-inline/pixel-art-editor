@@ -9,6 +9,7 @@
     "mcp": "tsx server/mcp-server.ts",
     "dev": "concurrently \"npm run bridge\" \"npm run web\"",
     "dev:all": "concurrently \"npm run bridge\" \"npm run web\" \"npm run mcp\"",
+    "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
@@ -23,5 +24,7 @@
     "zod": "4.4.3",
     "concurrently": "10.0.3"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@types/node": "^26.0.0"
+  }
 }
