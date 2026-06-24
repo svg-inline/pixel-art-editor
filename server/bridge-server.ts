@@ -3,6 +3,8 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { URL } from "node:url";
+import { z } from "zod";
+import { loadLocalEnv } from "./load-env.ts";
 import {
   activeFrameOf,
   atlasMetadata,
@@ -27,7 +29,7 @@ import {
   isHistoryCommand,
   type HistoryCommand,
 } from "../shared/history.ts";
-import { createAiProvider } from "./ai/provider.ts";
+import { createAiProvider, type AiOperation } from "./ai/provider.ts";
 import { encodePngRgba } from "./png.ts";
 import {
   defaultDbPath,
@@ -35,6 +37,16 @@ import {
   migrateRuntimeFiles,
   writeInitialRuntimeFiles,
 } from "./runtime-files.ts";
+import {
+  assertBridgeSecurity,
+  bridgeSecurityConfig,
+  corsHeaders,
+  isOriginAllowed,
+  isTokenValid,
+  requestOrigin,
+} from "./bridge-security.ts";
+
+loadLocalEnv();
 
 const PORT = Number(process.env.PIXEL_BRIDGE_PORT || 8787);
 const HOST = process.env.PIXEL_BRIDGE_HOST || "127.0.0.1";
@@ -45,9 +57,10 @@ const DB_PATH = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
 const BODY_LIMIT = Number(
   process.env.PIXEL_BRIDGE_BODY_LIMIT || 64 * 1024 * 1024,
 );
-const TOKEN = process.env.PIXEL_BRIDGE_TOKEN || "";
+const SECURITY = bridgeSecurityConfig();
 const aiProvider = createAiProvider();
 
+assertBridgeSecurity(SECURITY);
 migrateRuntimeFiles(PROJECT_PATH, DB_PATH);
 writeInitialRuntimeFiles(PROJECT_PATH, DB_PATH);
 
@@ -65,6 +78,97 @@ type WriteProjectOptions = {
   addHistory?: boolean;
   expectedRevision?: number | null;
 };
+const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const SelectionSchema = z
+  .object({
+    x: z.number(),
+    y: z.number(),
+    w: z.number(),
+    h: z.number(),
+  })
+  .nullable()
+  .optional();
+const AiOperationSchema = z.enum([
+  "generate",
+  "edit",
+  "edit_selection",
+  "replace_subject",
+  "create_variation",
+  "recolor_palette",
+  "extend_animation",
+]);
+const ProjectPostSchema = z
+  .object({
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    source: z.string().optional(),
+    addHistory: z.boolean().optional(),
+  })
+  .passthrough();
+const AiPromptSchema = z
+  .object({
+    prompt: z.string().default(""),
+    operation: AiOperationSchema.optional(),
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    selection: SelectionSchema,
+    layer: z.string().optional(),
+    from: HexColorSchema.optional(),
+    to: HexColorSchema.optional(),
+    maxColors: z.number().int().min(2).max(256).optional(),
+  })
+  .passthrough();
+const EditSelectionSchema = z
+  .object({
+    prompt: z.string().default(""),
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    selection: SelectionSchema,
+    layer: z.string().optional(),
+  })
+  .passthrough();
+const RecolorSchema = z
+  .object({
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    from: HexColorSchema,
+    to: HexColorSchema,
+  })
+  .passthrough();
+const LimitColorsSchema = z
+  .object({
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    maxColors: z.number().int().min(2).max(256).default(32),
+  })
+  .passthrough();
+const VariationSchema = z
+  .object({
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    variant: z.string().optional(),
+    prompt: z.string().optional(),
+  })
+  .passthrough();
+const ExtendAnimationSchema = z
+  .object({
+    project: z.any().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    totalFrames: z.number().int().min(1).max(64).default(8),
+  })
+  .passthrough();
+const LoginSchema = z
+  .object({
+    email: z.string().email().optional(),
+    name: z.string().optional(),
+  })
+  .passthrough();
+const GalleryPostSchema = z
+  .object({
+    name: z.string().optional(),
+    project: z.any().optional(),
+  })
+  .passthrough();
 const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 let writeQueue = Promise.resolve();
 let lastMtime = 0;
@@ -174,20 +278,6 @@ function broadcastProject(project = readProject()) {
   const expanded = expandProject(project);
   for (const res of clients) sendEvent(res, "project", expanded);
 }
-function corsHeaders(req: http.IncomingMessage) {
-  const origin = req.headers.origin || "";
-  const allowedOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(
-    String(origin),
-  )
-    ? String(origin)
-    : "*";
-  return {
-    "access-control-allow-origin": allowedOrigin,
-    "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type,x-pixel-token",
-    vary: "origin",
-  };
-}
 function json(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -196,7 +286,7 @@ function json(
 ) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    ...corsHeaders(req),
+    ...corsHeaders(req, SECURITY),
   });
   res.end(JSON.stringify(data));
 }
@@ -209,7 +299,7 @@ function png(
   res.writeHead(200, {
     "content-type": "image/png",
     "content-disposition": `inline; filename="${filename}"`,
-    ...corsHeaders(req),
+    ...corsHeaders(req, SECURITY),
   });
   res.end(buffer);
 }
@@ -236,12 +326,15 @@ async function body(req: http.IncomingMessage) {
     req.on("error", reject);
   });
 }
-function requireToken(req: http.IncomingMessage) {
-  if (!TOKEN) return true;
-  return (
-    req.headers["x-pixel-token"] === TOKEN ||
-    req.headers.authorization === `Bearer ${TOKEN}`
-  );
+function parseBody<T>(input: unknown, schema: z.ZodType<T>) {
+  const result = schema.safeParse(input);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`invalid_payload_${issues}`);
+  }
+  return result.data;
 }
 function renderProjectPng(project: Project, frameIndex = 0) {
   const frame =
@@ -290,15 +383,18 @@ const server = http.createServer(async (req, res) => {
     req.url || "/",
     `http://${req.headers.host || "localhost"}`,
   );
-  if (req.method === "OPTIONS") return json(req, res, 200, { ok: true });
-  if (!requireToken(req)) return json(req, res, 401, { error: "unauthorized" });
+  if (!isOriginAllowed(requestOrigin(req), SECURITY))
+    return json(req, res, 403, { error: "origin_not_allowed" });
+  if (req.method === "OPTIONS") return json(req, res, 204, { ok: true });
+  if (!isTokenValid(req, SECURITY, url.searchParams))
+    return json(req, res, 401, { error: "unauthorized" });
   try {
     if (url.pathname === "/api/events") {
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
         connection: "keep-alive",
-        ...corsHeaders(req),
+        ...corsHeaders(req, SECURITY),
       });
       clients.add(res);
       sendEvent(res, "project", readProject());
@@ -310,7 +406,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/project.compact" && req.method === "GET")
       return json(req, res, 200, compactProject(readProject()));
     if (url.pathname === "/api/project" && req.method === "POST") {
-      const data = await body(req);
+      const data = parseBody(await body(req), ProjectPostSchema);
       const projectInput = data?.project || data;
       return json(
         req,
@@ -324,10 +420,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/ai-prompt" && req.method === "POST") {
-      const data = await body(req);
+      const data = parseBody(await body(req), AiPromptSchema);
       const project = await aiProvider.run({
         prompt: data.prompt,
-        operation: data.operation || "generate",
+        operation: (data.operation || "generate") as AiOperation,
         project: data.project || readProject(),
         selection: data.selection || null,
         layer: data.layer,
@@ -345,7 +441,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
     if (url.pathname === "/api/tools/edit-selection" && req.method === "POST") {
-      const data = await body(req);
+      const data = parseBody(await body(req), EditSelectionSchema);
       return json(
         req,
         res,
@@ -365,7 +461,7 @@ const server = http.createServer(async (req, res) => {
       url.pathname === "/api/tools/recolor-palette" &&
       req.method === "POST"
     ) {
-      const data = await body(req);
+      const data = parseBody(await body(req), RecolorSchema);
       return json(
         req,
         res,
@@ -381,7 +477,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
     if (url.pathname === "/api/tools/limit-colors" && req.method === "POST") {
-      const data = await body(req);
+      const data = parseBody(await body(req), LimitColorsSchema);
       return json(
         req,
         res,
@@ -389,7 +485,7 @@ const server = http.createServer(async (req, res) => {
         await writeProject(
           limitColors(
             expandProject(data.project || readProject()),
-            Number(data.maxColors || 32),
+            data.maxColors,
           ),
           { expectedRevision: expectedRevisionFrom(data) },
         ),
@@ -399,7 +495,7 @@ const server = http.createServer(async (req, res) => {
       url.pathname === "/api/tools/create-variation" &&
       req.method === "POST"
     ) {
-      const data = await body(req);
+      const data = parseBody(await body(req), VariationSchema);
       return json(
         req,
         res,
@@ -417,7 +513,7 @@ const server = http.createServer(async (req, res) => {
       url.pathname === "/api/tools/extend-animation" &&
       req.method === "POST"
     ) {
-      const data = await body(req);
+      const data = parseBody(await body(req), ExtendAnimationSchema);
       return json(
         req,
         res,
@@ -425,7 +521,7 @@ const server = http.createServer(async (req, res) => {
         await writeProject(
           extendAnimation(
             data.project || readProject(),
-            Number(data.totalFrames || 8),
+            data.totalFrames,
           ),
           { expectedRevision: expectedRevisionFrom(data) },
         ),
@@ -469,7 +565,7 @@ const server = http.createServer(async (req, res) => {
       return json(req, res, 200, unityMetadata(readProject()));
 
     if (url.pathname === "/api/login" && req.method === "POST") {
-      const data = await body(req);
+      const data = parseBody(await body(req), LoginSchema);
       const db = readDb();
       let user = db.users.find((u: any) => u.email === data.email);
       if (!user) {
@@ -499,7 +595,7 @@ const server = http.createServer(async (req, res) => {
       );
     }
     if (url.pathname === "/api/gallery" && req.method === "POST") {
-      const data = await body(req);
+      const data = parseBody(await body(req), GalleryPostSchema);
       const project = expandProject(data.project || readProject());
       const db = readDb();
       const item = {

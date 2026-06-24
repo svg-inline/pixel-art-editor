@@ -21,6 +21,8 @@ Isso sobe:
 
 O editor conecta na bridge por SSE. Quando o MCP altera o projeto compartilhado, o canvas, timeline e preview animado atualizam automaticamente.
 
+Para rodar com token local, copie `.env.example` para `.env`, troque `PIXEL_BRIDGE_TOKEN` e use o mesmo valor em `VITE_PIXEL_BRIDGE_TOKEN`.
+
 ## Rodar MCP
 
 Use no ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
@@ -34,7 +36,8 @@ Use no ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
       "cwd": "/CAMINHO/DO/pixel-art-mcp",
       "env": {
         "PIXEL_PROJECT_PATH": "./runtime/pixel-project.mcp.json",
-        "PIXEL_DB_PATH": "./runtime/pixel-art-db.json"
+        "PIXEL_DB_PATH": "./runtime/pixel-art-db.json",
+        "PIXEL_BRIDGE_TOKEN": "mesmo-token-da-bridge"
       }
     }
   }
@@ -132,13 +135,28 @@ PIXEL_AI_ENDPOINT="http://127.0.0.1:9000/generate" PIXEL_AI_API_KEY="opcional" n
 
 ## Segurança local
 
-A bridge escuta por padrão em `127.0.0.1`. Para exigir token local:
+A bridge escuta por padrão em `127.0.0.1`, restringe CORS às origens do editor (`http://localhost:5173` e `http://127.0.0.1:5173`) e aplica limite de body nas rotas JSON.
+
+Modo dev:
+
+- Com `NODE_ENV` diferente de `production`, a bridge pode iniciar sem token para facilitar desenvolvimento local.
+- Mesmo sem token, CORS não usa `*`; páginas fora das origens permitidas são bloqueadas.
+
+Modo seguro:
 
 ```bash
-PIXEL_BRIDGE_TOKEN="um-token-local" npm run bridge
+NODE_ENV=production PIXEL_BRIDGE_TOKEN="um-token-local" npm run bridge
 ```
 
-Nesse caso, envie `x-pixel-token` ou `Authorization: Bearer <token>` nas chamadas HTTP.
+Nesse modo, `PIXEL_BRIDGE_TOKEN` é obrigatório. Envie `x-pixel-token` ou `Authorization: Bearer <token>` nas chamadas HTTP. Para SSE, `EventSource` não permite header customizado, então o editor envia `?token=<token>` quando `VITE_PIXEL_BRIDGE_TOKEN` está configurado.
+
+Para permitir outra origem do editor:
+
+```bash
+PIXEL_BRIDGE_ALLOWED_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
+```
+
+Observação: token em query string pode aparecer em logs. Para uma versão profissional, prefira sessão local ou cookie HttpOnly.
 
 ## Exportação para Godot 4
 

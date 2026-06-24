@@ -79,6 +79,7 @@ const DEFAULT_ZOOM = 3;
 const AUTOSAVE_DEBOUNCE_MS = 900;
 const BRIDGE_URL =
   import.meta.env.VITE_PIXEL_BRIDGE_URL || "http://localhost:8787";
+const BRIDGE_TOKEN = import.meta.env.VITE_PIXEL_BRIDGE_TOKEN || "";
 const DEFAULT_ANIMS = ["idle", "walk", "attack", "dodge", "skill", "death"];
 const idx = indexOf;
 const GRID_DENSITY_TARGETS = {
@@ -91,6 +92,22 @@ const gridStepForZoom = (zoom: number, density: GridDensity = "normal") => {
   const target = GRID_DENSITY_TARGETS[density] || GRID_DENSITY_TARGETS.normal;
   return GRID_STEPS.find((step) => step * zoom >= target) || 64;
 };
+function bridgeUrl(path: string, includeToken = false) {
+  const url = new URL(path, BRIDGE_URL);
+  if (includeToken && BRIDGE_TOKEN) url.searchParams.set("token", BRIDGE_TOKEN);
+  return url.toString();
+}
+function bridgeHeaders(headers?: HeadersInit) {
+  const out = new Headers(headers);
+  if (BRIDGE_TOKEN) out.set("x-pixel-token", BRIDGE_TOKEN);
+  return out;
+}
+function bridgeFetch(path: string, init: RequestInit = {}) {
+  return fetch(bridgeUrl(path), {
+    ...init,
+    headers: bridgeHeaders(init.headers),
+  });
+}
 
 function cloneProject<T>(p: T): T {
   return clone(p);
@@ -335,7 +352,7 @@ function App() {
   useEffect(() => {
     let es: EventSource | undefined;
     try {
-      es = new EventSource(`${BRIDGE_URL}/api/events`);
+      es = new EventSource(bridgeUrl("/api/events", true));
       es.onopen = () => setBridgeStatus("online");
       es.onerror = () => setBridgeStatus("offline");
       es.addEventListener("project", (e) => {
@@ -400,7 +417,7 @@ function App() {
     pendingSaveRevisionRef.current = expectedRevision;
     setAutosaveStatus("saving");
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/project`, {
+      const r = await bridgeFetch("/api/project", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -886,7 +903,7 @@ function App() {
   }
   async function saveBackend() {
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/project`, {
+      const r = await bridgeFetch("/api/project", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -911,7 +928,7 @@ function App() {
   }
   async function loadBackend() {
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/project`);
+      const r = await bridgeFetch("/api/project");
       if (r.ok) {
         const before = projectRef.current;
         const next = normalizeProject(await r.json());
@@ -926,7 +943,7 @@ function App() {
   }
   async function loadGalleryList() {
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/gallery`);
+      const r = await bridgeFetch("/api/gallery");
       if (r.ok) setGallery(await r.json());
     } catch {
       setBridgeStatus("offline");
@@ -934,7 +951,7 @@ function App() {
   }
   async function saveGallery() {
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/gallery`, {
+      const r = await bridgeFetch("/api/gallery", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: project.godot.asset, project }),
@@ -950,7 +967,7 @@ function App() {
   }
   async function loadGalleryItem(id: string) {
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/gallery/${id}`);
+      const r = await bridgeFetch(`/api/gallery/${id}`);
       if (r.ok) {
         const before = projectRef.current;
         const next = normalizeProject(await r.json());
@@ -964,7 +981,7 @@ function App() {
   async function applyPrompt() {
     const before = projectRef.current;
     try {
-      const r = await fetch(`${BRIDGE_URL}/api/ai-prompt`, {
+      const r = await bridgeFetch("/api/ai-prompt", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

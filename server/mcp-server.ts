@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { z } from "zod";
+import { loadLocalEnv } from "./load-env.ts";
 import {
   activeFrameOf,
   atlasMetadata,
@@ -52,6 +53,8 @@ import {
   migrateRuntimeFiles,
   writeInitialRuntimeFiles,
 } from "./runtime-files.ts";
+
+loadLocalEnv();
 
 const projectPath = path.resolve(
   process.env.PIXEL_PROJECT_PATH || defaultProjectPath(),
