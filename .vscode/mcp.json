@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "pixel-art-256": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "server/mcp-server.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PIXEL_PROJECT_PATH": "./pixel-project.mcp.json"
+      }
+    }
+  }
+}

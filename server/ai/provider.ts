@@ -1,4 +1,4 @@
-import { process } from "zod/v4/core";
+import process from "node:process";
 import {
   createVariation,
   editSelection,

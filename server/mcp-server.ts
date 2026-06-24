@@ -2,8 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { z } from "zod";
-import { process } from "zod/v4/core";
 import {
   activeFrameOf,
   atlasMetadata,
