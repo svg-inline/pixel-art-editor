@@ -21,6 +21,12 @@ import {
   unityMetadata,
   type Project,
 } from "../shared/pixel-core.ts";
+import {
+  createProjectCommand,
+  HISTORY_LIMIT,
+  isHistoryCommand,
+  type HistoryCommand,
+} from "../shared/history.ts";
 import { createAiProvider } from "./ai/provider.ts";
 import { encodePngRgba } from "./png.ts";
 
@@ -38,7 +44,7 @@ const BODY_LIMIT = Number(
 const TOKEN = process.env.PIXEL_BRIDGE_TOKEN || "";
 const aiProvider = createAiProvider();
 
-type Db = { users: any[]; gallery: any[]; history: any[] };
+type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
 class RevisionConflictError extends Error {
   status = 409;
   current: Project;
@@ -80,10 +86,27 @@ function readProject(): Project {
   return expandProject(readJsonFile(PROJECT_PATH, {}));
 }
 function readDb(): Db {
-  return readJsonFile(DB_PATH, { users: [], gallery: [], history: [] });
+  const db = readJsonFile(DB_PATH, { users: [], gallery: [], history: [] });
+  return {
+    users: Array.isArray(db.users) ? db.users : [],
+    gallery: Array.isArray(db.gallery) ? db.gallery : [],
+    history: Array.isArray(db.history)
+      ? db.history.filter(isHistoryCommand).slice(0, HISTORY_LIMIT)
+      : [],
+  };
 }
 function writeDb(db: Db) {
   atomicWrite(DB_PATH, JSON.stringify(db, null, 2));
+}
+function migrateDbHistory() {
+  const raw = readJsonFile(DB_PATH, { users: [], gallery: [], history: [] });
+  const db = readDb();
+  if (
+    !Array.isArray(raw.history) ||
+    raw.history.length !== db.history.length ||
+    raw.history.some((entry: any) => !isHistoryCommand(entry))
+  )
+    writeDb(db);
 }
 function expectedRevisionFrom(data: any): number | null {
   const value = data?.revision ?? data?.project?.revision;
@@ -110,13 +133,18 @@ async function writeProject(
     atomicWrite(PROJECT_PATH, JSON.stringify(compactProject(project), null, 2));
     if (addHistory) {
       const db = readDb();
-      db.history.unshift({
-        id: id(),
-        at: new Date().toISOString(),
-        project: compactProject(project),
-      });
-      db.history = db.history.slice(0, 50);
-      writeDb(db);
+      const historyCommand = createProjectCommand(
+        current,
+        project,
+        "project.change",
+        { source: "bridge" },
+        "bridge",
+      );
+      if (historyCommand) {
+        db.history.unshift(historyCommand);
+        db.history = db.history.slice(0, HISTORY_LIMIT);
+        writeDb(db);
+      }
     }
     lastMtime = fs.existsSync(PROJECT_PATH)
       ? fs.statSync(PROJECT_PATH).mtimeMs
@@ -247,6 +275,8 @@ fs.watchFile(PROJECT_PATH, { interval: 500 }, () => {
     }
   } catch {}
 });
+
+migrateDbHistory();
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(
@@ -491,15 +521,20 @@ const server = http.createServer(async (req, res) => {
         req,
         res,
         200,
-        db.history.map((h: any) => {
-          const p = expandProject(h.project);
-          return {
-            id: h.id,
-            at: h.at,
-            frames: p.frames.length,
-            asset: p.godot.asset,
-          };
-        }),
+        db.history.map((h) => ({
+          id: h.id,
+          at: h.at,
+          command: h.command.type,
+          label: h.command.label,
+          patches: h.patches.length,
+          pixelChanges: h.patches.reduce(
+            (sum, patch) =>
+              patch.type === "pixels.changed"
+                ? sum + patch.changes.length
+                : sum,
+            0,
+          ),
+        })),
       );
     }
     return json(req, res, 404, { error: "not_found" });

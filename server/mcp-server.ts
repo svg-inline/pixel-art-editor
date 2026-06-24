@@ -38,12 +38,21 @@ import {
   type Direction,
   type Project,
 } from "../shared/pixel-core.ts";
+import {
+  createProjectCommand,
+  HISTORY_LIMIT,
+  isHistoryCommand,
+  type HistoryCommand,
+  type HistoryCommandName,
+} from "../shared/history.ts";
 import { encodePngRgba } from "./png.ts";
 
 const projectPath = path.resolve(
   process.env.PIXEL_PROJECT_PATH || "./pixel-project.mcp.json",
 );
+const dbPath = path.resolve(process.env.PIXEL_DB_PATH || "./pixel-art-db.json");
 const writeCompact = process.env.PIXEL_PROJECT_COMPACT !== "0";
+type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
 function readJson(filePath: string, fallback: any) {
   if (!fs.existsSync(filePath)) return fallback;
   const text = fs.readFileSync(filePath, "utf8");
@@ -55,12 +64,38 @@ function atomicWrite(filePath: string, data: string | Buffer) {
   fs.writeFileSync(tmp, data);
   fs.renameSync(tmp, filePath);
 }
+function readDb(): Db {
+  const db = readJson(dbPath, { users: [], gallery: [], history: [] });
+  return {
+    users: Array.isArray(db.users) ? db.users : [],
+    gallery: Array.isArray(db.gallery) ? db.gallery : [],
+    history: Array.isArray(db.history)
+      ? db.history.filter(isHistoryCommand).slice(0, HISTORY_LIMIT)
+      : [],
+  };
+}
+function writeDb(db: Db) {
+  atomicWrite(dbPath, JSON.stringify(db, null, 2));
+}
+function migrateDbHistory() {
+  const raw = readJson(dbPath, { users: [], gallery: [], history: [] });
+  const db = readDb();
+  if (
+    !Array.isArray(raw.history) ||
+    raw.history.length !== db.history.length ||
+    raw.history.some((entry: any) => !isHistoryCommand(entry))
+  )
+    writeDb(db);
+}
 let project: Project = expandProject(readJson(projectPath, {}));
 function reload() {
   project = expandProject(readJson(projectPath, project));
   return project;
 }
-function save() {
+function save(
+  historyType: HistoryCommandName = "project.change",
+  params?: Record<string, unknown>,
+) {
   const current = expandProject(readJson(projectPath, {}));
   project = expandProject(project);
   project.revision = Math.max(current.revision, project.revision) + 1;
@@ -68,6 +103,19 @@ function save() {
     projectPath,
     JSON.stringify(writeCompact ? compactProject(project) : project, null, 2),
   );
+  const historyCommand = createProjectCommand(
+    current,
+    project,
+    historyType,
+    params,
+    "mcp",
+  );
+  if (historyCommand) {
+    const db = readDb();
+    db.history.unshift(historyCommand);
+    db.history = db.history.slice(0, HISTORY_LIMIT);
+    writeDb(db);
+  }
 }
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -112,6 +160,8 @@ function spritesheetBase64() {
 
 const server = new McpServer({ name: "pixel-art-256-mcp", version: "3.0.0" });
 
+migrateDbHistory();
+
 server.tool(
   "create_frame",
   "Cria um frame novo para spritesheet/animação.",
@@ -125,7 +175,7 @@ server.tool(
     f.duration = duration;
     project.frames.push(f);
     project.activeFrameId = f.id;
-    save();
+    save("frame.add", { name, duration });
     return ok(`Frame criado: ${name}`);
   },
 );
@@ -140,7 +190,7 @@ server.tool("duplicate_frame", "Duplica o frame ativo.", {}, async () => {
   f.activeLayerId = f.layers[0].id;
   project.frames.push(f);
   project.activeFrameId = f.id;
-  save();
+  save("frame.duplicate");
   return ok("Frame duplicado.");
 });
 
@@ -153,7 +203,7 @@ server.tool(
     const f = frameByName(project, frame);
     if (!f) throw new Error("Frame não encontrado");
     project.activeFrameId = f.id;
-    save();
+    save("project.change", { operation: "set_active_frame", frame });
     return ok(`Frame ativo: ${f.name}`);
   },
 );
@@ -167,7 +217,7 @@ server.tool(
     const l = blankLayer(name);
     f.layers.push(l);
     f.activeLayerId = l.id;
-    save();
+    save("layer.add", { name, frame });
     return ok(`Camada criada: ${name}`);
   },
 );
@@ -185,7 +235,7 @@ server.tool(
   async ({ x, y, color, layer, frame }) => {
     const f = getFrame(frame);
     setPixel(getLayer(f, layer), x, y, color);
-    save();
+    save("setPixel", { x, y, color, layer, frame });
     return ok("ok");
   },
 );
@@ -205,7 +255,7 @@ server.tool(
   async ({ x, y, w, h, color, layer, frame }) => {
     const f = getFrame(frame);
     drawRect(getLayer(f, layer), x, y, w, h, color);
-    save();
+    save("drawRect", { x, y, w, h, color, layer, frame });
     return ok("ok");
   },
 );
@@ -225,7 +275,16 @@ server.tool(
   async ({ x, y, rx, ry, color, layer, frame }) => {
     const f = getFrame(frame);
     drawEllipse(getLayer(f, layer), x, y, rx, ry, color);
-    save();
+    save("project.change", {
+      operation: "draw_ellipse",
+      x,
+      y,
+      rx,
+      ry,
+      color,
+      layer,
+      frame,
+    });
     return ok("ok");
   },
 );
@@ -244,7 +303,15 @@ server.tool(
   async ({ x, y, r, color, layer, frame }) => {
     const f = getFrame(frame);
     drawCircle(getLayer(f, layer), x, y, r, color);
-    save();
+    save("project.change", {
+      operation: "draw_circle",
+      x,
+      y,
+      r,
+      color,
+      layer,
+      frame,
+    });
     return ok("ok");
   },
 );
@@ -265,7 +332,17 @@ server.tool(
   async ({ x, y, rx, ry, thickness, color, layer, frame }) => {
     const f = getFrame(frame);
     drawEllipseOutline(getLayer(f, layer), x, y, rx, ry, thickness, color);
-    save();
+    save("project.change", {
+      operation: "draw_ellipse_outline",
+      x,
+      y,
+      rx,
+      ry,
+      thickness,
+      color,
+      layer,
+      frame,
+    });
     return ok("ok");
   },
 );
@@ -286,7 +363,7 @@ server.tool(
   async ({ x1, y1, x2, y2, color, thickness, layer, frame }) => {
     const f = getFrame(frame);
     drawLine(getLayer(f, layer), x1, y1, x2, y2, color, thickness);
-    save();
+    save("drawLine", { x1, y1, x2, y2, color, thickness, layer, frame });
     return ok("ok");
   },
 );
@@ -298,7 +375,7 @@ server.tool(
   async ({ layer, frame }) => {
     const f = getFrame(frame);
     clearLayer(getLayer(f, layer));
-    save();
+    save("project.change", { operation: "clear_layer", layer, frame });
     return ok("ok");
   },
 );
@@ -324,7 +401,14 @@ server.tool(
       fps,
       loop,
     };
-    save();
+    save("project.change", {
+      operation: "set_godot_metadata",
+      asset,
+      animation,
+      direction,
+      fps,
+      loop,
+    });
     return ok("Metadados Godot atualizados.");
   },
 );
@@ -342,7 +426,7 @@ server.tool(
       mode,
       color: color.toLowerCase(),
     };
-    save();
+    save("project.change", { operation: "set_background", mode, color });
     return ok(
       mode === "color"
         ? `Fundo definido como cor ${color.toLowerCase()}.`
@@ -358,7 +442,7 @@ server.tool(
   async ({ prompt }) => {
     reload();
     project = generatePixelArtFromPrompt(prompt, project);
-    save();
+    save("project.replace", { operation: "generate_pixel_art", prompt });
     return ok(
       `Pixel art gerada. Frames: ${project.frames.length}, animação: ${project.godot.animation}`,
     );
@@ -372,7 +456,7 @@ server.tool(
   async ({ prompt }) => {
     reload();
     project = generatePixelArtFromPrompt(prompt, project);
-    save();
+    save("project.replace", { operation: "draw_sprite_from_prompt", prompt });
     return ok(`Prompt aplicado. Frames: ${project.frames.length}`);
   },
 );
@@ -384,7 +468,7 @@ server.tool(
   async ({ prompt, layer }) => {
     reload();
     project = editSelection(project, prompt, null, layer);
-    save();
+    save("project.change", { operation: "edit_pixel_art", prompt, layer });
     return ok("Edição aplicada no projeto.");
   },
 );
@@ -408,7 +492,15 @@ server.tool(
       { x, y, w: w - 1, h: h - 1 },
       layer,
     );
-    save();
+    save("project.change", {
+      operation: "edit_selection",
+      prompt,
+      x,
+      y,
+      w,
+      h,
+      layer,
+    });
     return ok("Seleção editada.");
   },
 );
@@ -432,7 +524,15 @@ server.tool(
       { x, y, w: w - 1, h: h - 1 },
       layer,
     );
-    save();
+    save("project.change", {
+      operation: "replace_subject",
+      prompt,
+      x,
+      y,
+      w,
+      h,
+      layer,
+    });
     return ok("Objeto/sujeito substituído na seleção.");
   },
 );
@@ -448,7 +548,7 @@ server.tool(
   async ({ variant }) => {
     reload();
     project = createVariation(project, variant);
-    save();
+    save("project.change", { operation: "create_variation", variant });
     return ok(`Variação criada: ${variant}`);
   },
 );
@@ -463,7 +563,7 @@ server.tool(
   async ({ from, to }) => {
     reload();
     project = replaceGlobalColor(project, from, to);
-    save();
+    save("project.change", { operation: "recolor_palette", from, to });
     return ok(`Cor substituída: ${from} → ${to}`);
   },
 );
@@ -475,7 +575,7 @@ server.tool(
   async ({ maxColors }) => {
     reload();
     project = limitColors(project, maxColors);
-    save();
+    save("project.change", { operation: "limit_palette", maxColors });
     return ok(`Paleta limitada para ${maxColors} cores.`);
   },
 );
@@ -504,7 +604,7 @@ server.tool(
   async () => {
     reload();
     project = centerObject(project);
-    save();
+    save("project.change", { operation: "center_object" });
     return {
       content: [
         {
@@ -523,7 +623,7 @@ server.tool(
   async ({ totalFrames }) => {
     reload();
     project = extendAnimation(project, totalFrames);
-    save();
+    save("project.change", { operation: "extend_animation", totalFrames });
     return ok(`Animação com ${project.frames.length} frames.`);
   },
 );
@@ -579,7 +679,7 @@ server.tool(
   { json: z.string() },
   async ({ json }) => {
     project = expandProject(JSON.parse(json));
-    save();
+    save("project.replace", { operation: "apply_project_json" });
     return ok("Projeto aplicado.");
   },
 );

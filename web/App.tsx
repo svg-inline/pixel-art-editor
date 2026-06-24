@@ -36,6 +36,13 @@ import type {
   ProjectBackground,
   Selection,
 } from "../shared/pixel-core.ts";
+import {
+  applyCommand,
+  createProjectCommand,
+  revertCommand,
+  type HistoryCommand,
+  type HistoryCommandName,
+} from "../shared/history.ts";
 import "./style.css";
 
 type Tool = "pencil" | "eraser" | "bucket" | "picker" | "select" | "dither";
@@ -210,6 +217,7 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
+  const strokeBeforeRef = useRef<Project | null>(null);
   const lastBridgeSave = useRef(0);
   const [project, setProject] = useState<Project>(() =>
     normalizeProject(
@@ -231,8 +239,8 @@ function App() {
   const [gridMajorStep, setGridMajorStep] = useState(32);
   const [paintGridCell, setPaintGridCell] = useState(true);
   const [showOnion, setShowOnion] = useState(true);
-  const [history, setHistory] = useState<Project[]>([]);
-  const [redo, setRedo] = useState<Project[]>([]);
+  const [history, setHistory] = useState<HistoryCommand[]>([]);
+  const [redo, setRedo] = useState<HistoryCommand[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectionStart, setSelectionStart] = useState<Point | null>(null);
   const [clipboard, setClipboard] = useState<Clip | null>(null);
@@ -356,9 +364,19 @@ function App() {
     return () => es?.close?.();
   }, []);
 
-  function pushHistory() {
-    setHistory((h) => [...h.slice(-60), cloneProject(project)]);
+  function pushHistory(command: HistoryCommand | null) {
+    if (!command) return;
+    setHistory((h) => [...h.slice(-99), command]);
     setRedo([]);
+  }
+  function commitHistory(
+    before: Project | null,
+    after: Project,
+    type: HistoryCommandName = "project.change",
+    params?: Record<string, unknown>,
+  ) {
+    if (!before) return;
+    pushHistory(createProjectCommand(before, after, type, params, "web"));
   }
   function markDirty() {
     setDirty(true);
@@ -373,6 +391,7 @@ function App() {
     pendingSaveRevisionRef.current = null;
     setDirty(false);
     setAutosaveStatus(status);
+    projectRef.current = next;
     setProject(next);
     return next;
   }
@@ -404,9 +423,12 @@ function App() {
       pendingSaveRevisionRef.current = null;
       if (currentSnapshot !== snapshot) {
         lastSavedSnapshotRef.current = JSON.stringify(saved);
-        setProject((current) =>
-          normalizeProject({ ...current, revision: saved.revision }),
-        );
+        const current = normalizeProject({
+          ...projectRef.current,
+          revision: saved.revision,
+        });
+        projectRef.current = current;
+        setProject(current);
         setAutosaveStatus("dirty");
         return;
       }
@@ -422,26 +444,35 @@ function App() {
   function updateProject(
     mutator: (project: Project) => Project | void,
     saveHist = true,
+    historyType: HistoryCommandName = "project.change",
+    params?: Record<string, unknown>,
   ) {
-    if (saveHist) pushHistory();
     markDirty();
-    setProject((p) => {
-      const n = cloneProject(p);
-      return normalizeProject(mutator(n) || n);
-    });
+    const before = cloneProject(projectRef.current);
+    const n = cloneProject(before);
+    const next = normalizeProject(mutator(n) || n);
+    if (saveHist) commitHistory(before, next, historyType, params);
+    projectRef.current = next;
+    setProject(next);
   }
   function undo() {
     if (!history.length) return;
     markDirty();
-    setRedo((r) => [cloneProject(project), ...r]);
-    setProject(history[history.length - 1]);
+    const command = history[history.length - 1];
+    setRedo((r) => [command, ...r]);
+    const next = revertCommand(projectRef.current, command);
+    projectRef.current = next;
+    setProject(next);
     setHistory((h) => h.slice(0, -1));
   }
   function redoAction() {
     if (!redo.length) return;
     markDirty();
-    setHistory((h) => [...h, cloneProject(project)]);
-    setProject(redo[0]);
+    const command = redo[0];
+    setHistory((h) => [...h.slice(-99), command]);
+    const next = applyCommand(projectRef.current, command);
+    projectRef.current = next;
+    setProject(next);
     setRedo((r) => r.slice(1));
   }
 
@@ -544,29 +575,32 @@ function App() {
   }
   function editAt(x: number, y: number) {
     if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
+    if (tool === "picker") {
+      const picked = expandPixels(activeLayerOf(frame).pixels)[idx(x, y)];
+      setColor(picked || color);
+      return;
+    }
     markDirty();
-    setProject((p) => {
-      const n = cloneProject(p);
-      const f = activeFrameOf(n);
-      const l = activeLayerOf(f);
-      const cellSize =
-        showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
-      const cellX = Math.floor(x / cellSize) * cellSize;
-      const cellY = Math.floor(y / cellSize) * cellSize;
-      const paintCell = (valueFn) => {
-        for (let yy = cellY; yy < Math.min(SIZE, cellY + cellSize); yy++)
-          for (let xx = cellX; xx < Math.min(SIZE, cellX + cellSize); xx++)
-            l.pixels[idx(xx, yy)] = valueFn(xx, yy);
-      };
-      if (tool === "pencil") paintCell(() => color);
-      if (tool === "eraser") paintCell(() => null);
-      if (tool === "picker") setColor(l.pixels[idx(x, y)] || color);
-      if (tool === "bucket")
-        floodFillFrame(f, activeLayerIndexOf(f), x, y, color);
-      if (tool === "dither")
-        paintCell((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
-      return normalizeProject(n);
-    });
+    const n = cloneProject(projectRef.current);
+    const f = activeFrameOf(n);
+    const l = activeLayerOf(f);
+    const cellSize =
+      showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
+    const cellX = Math.floor(x / cellSize) * cellSize;
+    const cellY = Math.floor(y / cellSize) * cellSize;
+    const paintCell = (valueFn) => {
+      for (let yy = cellY; yy < Math.min(SIZE, cellY + cellSize); yy++)
+        for (let xx = cellX; xx < Math.min(SIZE, cellX + cellSize); xx++)
+          l.pixels[idx(xx, yy)] = valueFn(xx, yy);
+    };
+    if (tool === "pencil") paintCell(() => color);
+    if (tool === "eraser") paintCell(() => null);
+    if (tool === "bucket") floodFillFrame(f, activeLayerIndexOf(f), x, y, color);
+    if (tool === "dither")
+      paintCell((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
+    const next = normalizeProject(n);
+    projectRef.current = next;
+    setProject(next);
   }
   function onMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
     const p = getCell(e);
@@ -575,7 +609,7 @@ function App() {
       setSelection({ ...p, w: 0, h: 0 });
       return;
     }
-    pushHistory();
+    strokeBeforeRef.current = cloneProject(projectRef.current);
     drawingRef.current = true;
     editAt(p.x, p.y);
   }
@@ -593,6 +627,21 @@ function App() {
     if (drawingRef.current && e.buttons === 1) editAt(p.x, p.y);
   }
   function onMouseUp() {
+    if (drawingRef.current) {
+      const type =
+        tool === "bucket"
+          ? "floodFill"
+          : tool === "pencil" || tool === "eraser"
+            ? paintGridCell && effectiveGridStep > 1
+              ? "drawRect"
+              : "setPixel"
+            : "project.change";
+      commitHistory(strokeBeforeRef.current, projectRef.current, type, {
+        tool,
+        color: tool === "eraser" ? null : color,
+      });
+      strokeBeforeRef.current = null;
+    }
     drawingRef.current = false;
     setSelectionStart(null);
   }
@@ -603,7 +652,7 @@ function App() {
       const l = blankLayer(`Layer ${f.layers.length + 1}`);
       f.layers.push(l);
       f.activeLayerId = l.id;
-    });
+    }, true, "layer.add");
   }
   function removeLayer(id: string) {
     updateProject((p) => {
@@ -611,7 +660,7 @@ function App() {
       if (f.layers.length === 1) return;
       f.layers = f.layers.filter((l) => l.id !== id);
       f.activeLayerId = f.layers[0].id;
-    });
+    }, true, "layer.remove", { layerId: id });
   }
   function moveLayer(i: number, dir: number) {
     updateProject((p) => {
@@ -619,7 +668,7 @@ function App() {
       const j = i + dir;
       if (j < 0 || j >= f.layers.length) return;
       [f.layers[i], f.layers[j]] = [f.layers[j], f.layers[i]];
-    });
+    }, true, "project.change", { operation: "layer.move", from: i, to: i + dir });
   }
   function updateLayer(i: number, mutator: (layer: Layer) => void) {
     updateProject((p) => {
@@ -648,7 +697,7 @@ function App() {
       const f = blankFrame(`Frame ${p.frames.length + 1}`);
       p.frames.push(f);
       p.activeFrameId = f.id;
-    });
+    }, true, "frame.add");
   }
   function duplicateFrame() {
     updateProject((p) => {
@@ -659,21 +708,21 @@ function App() {
       f.activeLayerId = f.layers[0].id;
       p.frames.splice(activeFrameIndex(p) + 1, 0, f);
       p.activeFrameId = f.id;
-    });
+    }, true, "frame.duplicate");
   }
   function removeFrame(id: string) {
     updateProject((p) => {
       if (p.frames.length === 1) return;
       p.frames = p.frames.filter((f) => f.id !== id);
       p.activeFrameId = p.frames[0].id;
-    });
+    }, true, "frame.remove", { frameId: id });
   }
   function moveFrame(i: number, dir: number) {
     updateProject((p) => {
       const j = i + dir;
       if (j < 0 || j >= p.frames.length) return;
       [p.frames[i], p.frames[j]] = [p.frames[j], p.frames[i]];
-    });
+    }, true, "frame.move", { from: i, to: i + dir });
   }
 
   function copySelection(cut = false) {
@@ -780,9 +829,12 @@ function App() {
     const f = e.target.files[0];
     if (!f) return;
     readJsonFile(f).then((json) => {
-      pushHistory();
+      const before = projectRef.current;
+      const next = normalizeProject(json);
+      commitHistory(before, next, "project.replace", { source: "json" });
       markDirty();
-      setProject(normalizeProject(json));
+      projectRef.current = next;
+      setProject(next);
     });
   }
   function exportPng() {
@@ -861,8 +913,10 @@ function App() {
     try {
       const r = await fetch(`${BRIDGE_URL}/api/project`);
       if (r.ok) {
-        pushHistory();
-        acceptSavedProject(await r.json());
+        const before = projectRef.current;
+        const next = normalizeProject(await r.json());
+        commitHistory(before, next, "project.replace", { source: "bridge" });
+        acceptSavedProject(next);
         setBridgeStatus("loaded");
         setTimeout(() => setBridgeStatus("online"), 700);
       }
@@ -898,15 +952,17 @@ function App() {
     try {
       const r = await fetch(`${BRIDGE_URL}/api/gallery/${id}`);
       if (r.ok) {
-        pushHistory();
-        acceptSavedProject(await r.json());
+        const before = projectRef.current;
+        const next = normalizeProject(await r.json());
+        commitHistory(before, next, "project.replace", { source: "gallery", id });
+        acceptSavedProject(next);
       }
     } catch {
       setBridgeStatus("offline");
     }
   }
   async function applyPrompt() {
-    pushHistory();
+    const before = projectRef.current;
     try {
       const r = await fetch(`${BRIDGE_URL}/api/ai-prompt`, {
         method: "POST",
@@ -925,16 +981,27 @@ function App() {
         return;
       }
       if (!r.ok) throw new Error("bridge off");
-      acceptSavedProject(await r.json());
+      const next = normalizeProject(await r.json());
+      commitHistory(before, next, "project.change", {
+        operation: aiOperation,
+        prompt,
+      });
+      acceptSavedProject(next);
       setBridgeStatus("prompt");
       setTimeout(() => setBridgeStatus("online"), 700);
     } catch {
       markDirty();
-      setProject(
+      const next =
         aiOperation === "generate"
           ? generatePixelArtFromPrompt(prompt, project)
-          : project,
-      );
+          : project;
+      commitHistory(before, next, "project.change", {
+        operation: aiOperation,
+        prompt,
+        fallback: true,
+      });
+      projectRef.current = next;
+      setProject(next);
       setBridgeStatus("local-prompt");
     }
   }
