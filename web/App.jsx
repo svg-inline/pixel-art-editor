@@ -1,33 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  activeFrameOf,
+  activeLayerOf,
+  atlasMetadata,
+  blankFrame,
+  blankLayer,
+  clamp,
+  clone,
+  colorsUsed,
+  compositeFrameRgba,
+  DIRECTIONS,
+  expandPixels,
+  generatePixelArtFromPrompt,
+  godotMetadata,
+  indexOf,
+  isHex,
+  limitColors as limitProjectColors,
+  normalizeProject,
+  qualityReport,
+  replaceGlobalColor as replaceProjectColor,
+  selectionBounds,
+  SIZE,
+  slug,
+  uid,
+  unityMetadata,
+} from "../shared/pixel-core.ts";
 import "./style.css";
 
-const SIZE = 256;
 const DEFAULT_ZOOM = 3;
 const BRIDGE_URL =
   import.meta.env.VITE_PIXEL_BRIDGE_URL || "http://localhost:8787";
-const DIRECTIONS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-const DEFAULT_PALETTE = [
-  "#111827",
-  "#374151",
-  "#6b7280",
-  "#d1d5db",
-  "#f8fafc",
-  "#7f1d1d",
-  "#b45309",
-  "#f59e0b",
-  "#166534",
-  "#22c55e",
-  "#1d4ed8",
-  "#60a5fa",
-  "#581c87",
-  "#a855f7",
-];
 const DEFAULT_ANIMS = ["idle", "walk", "attack", "dodge", "skill", "death"];
-const uid = () => crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
-const idx = (x, y, size = SIZE) => y * size + x;
-const isHex = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
-const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const idx = indexOf;
 const GRID_DENSITY_TARGETS = {
   compacta: 14,
   normal: 26,
@@ -38,117 +43,9 @@ const gridStepForZoom = (zoom, density = "normal") => {
   const target = GRID_DENSITY_TARGETS[density] || GRID_DENSITY_TARGETS.normal;
   return GRID_STEPS.find((step) => step * zoom >= target) || 64;
 };
-const slug = (v) =>
-  String(v || "asset")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "asset";
-
-const blankLayer = (name = "Layer") => ({
-  id: uid(),
-  name,
-  visible: true,
-  opacity: 1,
-  pixels: new Array(SIZE * SIZE).fill(null),
-});
-const blankFrame = (name = "Frame 1") => {
-  const layer = blankLayer("Base");
-  return {
-    id: uid(),
-    name,
-    duration: 100,
-    layers: [layer],
-    activeLayerId: layer.id,
-  };
-};
 
 function cloneProject(p) {
-  return JSON.parse(JSON.stringify(p));
-}
-function expandPixels(pixels) {
-  if (Array.isArray(pixels) && pixels.length === SIZE * SIZE) return pixels;
-  if (pixels?.encoding === "rle" && Array.isArray(pixels.runs)) {
-    const out = [];
-    for (const [count, color] of pixels.runs) {
-      for (let i = 0; i < count && out.length < SIZE * SIZE; i++)
-        out.push(
-          color && /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : null,
-        );
-    }
-    while (out.length < SIZE * SIZE) out.push(null);
-    return out;
-  }
-  return new Array(SIZE * SIZE).fill(null);
-}
-function normalizeProject(input) {
-  const source =
-    input?.format === "pixel-art-compact-v1" && input.project
-      ? input.project
-      : input;
-  const p = source && typeof source === "object" ? cloneProject(source) : {};
-  p.size = Number(p.size || SIZE);
-  if (!Array.isArray(p.frames) || !p.frames.length) {
-    const layers =
-      Array.isArray(p.layers) && p.layers.length
-        ? p.layers
-        : [blankLayer("Base")];
-    const activeLayerId = p.activeLayerId || layers[0].id;
-    p.frames = [
-      { id: uid(), name: "Frame 1", duration: 100, layers, activeLayerId },
-    ];
-    delete p.layers;
-  }
-  p.frames = p.frames.map((frame, i) => {
-    const layers =
-      Array.isArray(frame.layers) && frame.layers.length
-        ? frame.layers
-        : [blankLayer("Base")];
-    layers.forEach((l, li) => {
-      l.id ||= uid();
-      l.name ||= `Layer ${li + 1}`;
-      l.visible = l.visible !== false;
-      l.opacity = Number.isFinite(Number(l.opacity)) ? Number(l.opacity) : 1;
-      l.pixels = expandPixels(l.pixels);
-    });
-    return {
-      ...frame,
-      id: frame.id || uid(),
-      name: frame.name || `Frame ${i + 1}`,
-      duration: Number(frame.duration || 100),
-      layers,
-      activeLayerId: frame.activeLayerId || layers[0].id,
-    };
-  });
-  p.activeFrameId ||= p.frames[0].id;
-  if (!p.frames.some((f) => f.id === p.activeFrameId))
-    p.activeFrameId = p.frames[0].id;
-  p.palette =
-    Array.isArray(p.palette) && p.palette.length ? p.palette : DEFAULT_PALETTE;
-  p.godot = {
-    ...{
-      asset: "pixel_asset",
-      animation: "idle_w",
-      direction: "W",
-      fps: 6,
-      loop: true,
-    },
-    ...(p.godot || {}),
-  };
-  p.background = {
-    mode: p.background?.mode === "color" ? "color" : "transparent",
-    color: isHex(p.background?.color)
-      ? p.background.color.toLowerCase()
-      : "#0f172a",
-  };
-  p.quality = p.quality || {};
-  return p;
-}
-function activeFrameOf(project) {
-  return (
-    project.frames.find((f) => f.id === project.activeFrameId) ||
-    project.frames[0]
-  );
+  return clone(p);
 }
 function activeFrameIndex(project) {
   return Math.max(
@@ -162,45 +59,21 @@ function activeLayerIndexOf(frame) {
     frame.layers.findIndex((l) => l.id === frame.activeLayerId),
   );
 }
-function activeLayerOf(frame) {
-  return frame.layers[activeLayerIndexOf(frame)];
-}
-function hexToRgba(hex, opacity = 1) {
-  const h = String(hex || "#000000").replace("#", "");
-  const v =
-    h.length === 3
-      ? h
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : h.padEnd(6, "0").slice(0, 6);
-  const n = parseInt(v, 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${opacity})`;
-}
 function floodFillFrame(frame, layerIndex, x, y, color) {
   const layer = frame.layers[layerIndex];
-  const target = layer.pixels[idx(x, y)];
+  const pixels = expandPixels(layer.pixels);
+  layer.pixels = pixels;
+  const target = pixels[idx(x, y)];
   if (target === color) return;
   const q = [[x, y]];
   while (q.length) {
     const [cx, cy] = q.pop();
     if (cx < 0 || cy < 0 || cx >= SIZE || cy >= SIZE) continue;
     const i = idx(cx, cy);
-    if (layer.pixels[i] !== target) continue;
-    layer.pixels[i] = color;
+    if (pixels[i] !== target) continue;
+    pixels[i] = color;
     q.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
   }
-}
-function colorsUsed(project) {
-  const map = new Map();
-  project.frames.forEach((frame) =>
-    frame.layers.forEach((layer) =>
-      layer.pixels.forEach((px) => {
-        if (px) map.set(px, (map.get(px) || 0) + 1);
-      }),
-    ),
-  );
-  return [...map.entries()].sort((a, b) => b[1] - a[1]);
 }
 function fillBackground(ctx, background, scale = 1) {
   if (background?.mode !== "color") return;
@@ -213,15 +86,11 @@ function compositeFrame(frame, background = { mode: "transparent" }) {
   out.height = SIZE;
   const ctx = out.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  fillBackground(ctx, background, 1);
-  frame.layers.forEach((layer) => {
-    if (!layer.visible) return;
-    layer.pixels.forEach((px, i) => {
-      if (!px) return;
-      ctx.fillStyle = hexToRgba(px, layer.opacity);
-      ctx.fillRect(i % SIZE, Math.floor(i / SIZE), 1, 1);
-    });
-  });
+  ctx.putImageData(
+    new ImageData(new Uint8ClampedArray(compositeFrameRgba(frame, background)), SIZE, SIZE),
+    0,
+    0,
+  );
   return out;
 }
 function downloadText(filename, text, type = "application/json") {
@@ -240,14 +109,6 @@ function downloadCanvas(filename, canvas) {
 function readJsonFile(file) {
   return file.text().then((t) => JSON.parse(t));
 }
-function selectionBounds(sel) {
-  if (!sel) return null;
-  const x1 = Math.max(0, Math.min(sel.x, sel.x + sel.w));
-  const y1 = Math.max(0, Math.min(sel.y, sel.y + sel.h));
-  const x2 = Math.min(SIZE - 1, Math.max(sel.x, sel.x + sel.w));
-  const y2 = Math.min(SIZE - 1, Math.max(sel.y, sel.y + sel.h));
-  return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
-}
 function getSelectionPixels(layer, sel) {
   const b = selectionBounds(sel);
   if (!b) return null;
@@ -259,13 +120,15 @@ function getSelectionPixels(layer, sel) {
 }
 function pastePixels(layer, clip, targetX, targetY, eraseSource = false) {
   if (!clip) return;
+  const pixels = expandPixels(layer.pixels);
+  layer.pixels = pixels;
   if (eraseSource) {
     for (let y = 0; y < clip.h; y++)
       for (let x = 0; x < clip.w; x++) {
         const sx = clip.x + x,
           sy = clip.y + y;
         if (sx >= 0 && sy >= 0 && sx < SIZE && sy < SIZE)
-          layer.pixels[idx(sx, sy)] = null;
+          pixels[idx(sx, sy)] = null;
       }
   }
   for (let y = 0; y < clip.h; y++)
@@ -273,210 +136,8 @@ function pastePixels(layer, clip, targetX, targetY, eraseSource = false) {
       const tx = targetX + x,
         ty = targetY + y;
       if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE)
-        layer.pixels[idx(tx, ty)] = clip.pixels[y * clip.w + x];
+        pixels[idx(tx, ty)] = clip.pixels[y * clip.w + x];
     }
-}
-function countFalseCheckerboard(project) {
-  const bad = new Set([
-    "#dddddd",
-    "#ddd",
-    "#cccccc",
-    "#ccc",
-    "#ffffff",
-    "#f5f5f5",
-    "#eeeeee",
-    "#999999",
-    "#9ca3af",
-  ]);
-  let count = 0;
-  project.frames.forEach((frame) =>
-    frame.layers.forEach((layer) =>
-      layer.pixels.forEach((px) => {
-        if (px && bad.has(String(px).toLowerCase())) count++;
-      }),
-    ),
-  );
-  return count;
-}
-function objectBounds(project) {
-  let minX = SIZE,
-    minY = SIZE,
-    maxX = -1,
-    maxY = -1,
-    pixels = 0;
-  project.frames.forEach((frame) =>
-    frame.layers.forEach((layer) => {
-      if (!layer.visible) return;
-      layer.pixels.forEach((px, i) => {
-        if (!px) return;
-        const x = i % SIZE,
-          y = Math.floor(i / SIZE);
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-        pixels++;
-      });
-    }),
-  );
-  if (!pixels) return null;
-  const w = maxX - minX + 1,
-    h = maxY - minY + 1,
-    cx = minX + (w - 1) / 2,
-    cy = minY + (h - 1) / 2;
-  return {
-    x: minX,
-    y: minY,
-    w,
-    h,
-    pixels,
-    centerOffsetX: Math.round(cx - (SIZE - 1) / 2),
-    centerOffsetY: Math.round(cy - (SIZE - 1) / 2),
-  };
-}
-function qualityReport(project, maxColors = 32) {
-  const used = colorsUsed(project);
-  const opaqueBg = project.frames.some((frame) =>
-    frame.layers.some((layer) => layer.pixels.every(Boolean)),
-  );
-  const bounds = objectBounds(project);
-  const warnings = [];
-  if (!bounds) warnings.push("vazio");
-  if (used.length > maxColors) warnings.push("muitas cores");
-  if (countFalseCheckerboard(project)) warnings.push("quadriculado falso");
-  if (opaqueBg) warnings.push("fundo opaco");
-  if (bounds) {
-    if (bounds.w < 24 || bounds.h < 24) warnings.push("objeto pequeno");
-    if (bounds.w > SIZE - 16 || bounds.h > SIZE - 16)
-      warnings.push("objeto grande");
-    if (Math.abs(bounds.centerOffsetX) > 14 || Math.abs(bounds.centerOffsetY) > 14)
-      warnings.push("fora do centro");
-  }
-  return {
-    colors: used.length,
-    overLimit: used.length > maxColors,
-    maxColors,
-    falseCheckerboardPixels: countFalseCheckerboard(project),
-    hasFullOpaqueLayer: opaqueBg,
-    transparentOk: !opaqueBg,
-    frames: project.frames.length,
-    layers: project.frames.reduce((acc, f) => acc + f.layers.length, 0),
-    background: project.background,
-    bounds,
-    warnings,
-  };
-}
-function generateHeuristicProject(prompt, baseProject) {
-  const lower = String(prompt || "").toLowerCase();
-  const isWalk = /walk|andar|movimento|correr/.test(lower);
-  const isAttack = /attack|ataque|golpe/.test(lower);
-  const frameCount = isAttack ? 6 : isWalk ? 8 : 4;
-  const direction =
-    lower.includes("oeste") || lower.includes(" west") || lower.includes(" w ")
-      ? "W"
-      : lower.includes("leste") || lower.includes("east")
-        ? "E"
-        : "S";
-  const anim = isAttack
-    ? `attack_${direction.toLowerCase()}`
-    : isWalk
-      ? `walk_${direction.toLowerCase()}`
-      : `idle_${direction.toLowerCase()}`;
-  const project = normalizeProject(baseProject || {});
-  project.frames = [];
-  project.activeFrameId = null;
-  project.godot = {
-    ...project.godot,
-    animation: anim,
-    direction,
-    fps: isAttack ? 10 : isWalk ? 8 : 6,
-  };
-  const colors = {
-    outline: "#111827",
-    cloth: "#374151",
-    leather: "#78350f",
-    skin: "#d6a878",
-    metal: "#9ca3af",
-    shadow: "#1f2937",
-    highlight: "#facc15",
-  };
-  for (let f = 0; f < frameCount; f++) {
-    const frame = blankFrame(`Frame ${f + 1}`);
-    frame.layers = [
-      blankLayer("Silhueta"),
-      blankLayer("Detalhes"),
-      blankLayer("Sombra/Luz"),
-    ];
-    frame.activeLayerId = frame.layers[1].id;
-    const bob = Math.round(Math.sin((f / frameCount) * Math.PI * 2) * 2);
-    const swing = isAttack
-      ? f * 4
-      : Math.round(Math.sin((f / frameCount) * Math.PI * 2) * 3);
-    const step = isWalk
-      ? Math.round(Math.sin((f / frameCount) * Math.PI * 2) * 5)
-      : 0;
-    const cx = 128,
-      cy = 128 + bob;
-    const faceLeft = direction === "W";
-    const lx = faceLeft ? -1 : 1;
-    const drawRect = (layer, x, y, w, h, c) => {
-      for (let yy = y; yy < y + h; yy++)
-        for (let xx = x; xx < x + w; xx++)
-          if (xx >= 0 && yy >= 0 && xx < SIZE && yy < SIZE)
-            layer.pixels[idx(xx, yy)] = c;
-    };
-    const drawEllipse = (layer, x, y, rx, ry, c) => {
-      for (let yy = -ry; yy <= ry; yy++)
-        for (let xx = -rx; xx <= rx; xx++)
-          if ((xx * xx) / (rx * rx) + (yy * yy) / (ry * ry) <= 1) {
-            const px = x + xx,
-              py = y + yy;
-            if (px >= 0 && py >= 0 && px < SIZE && py < SIZE)
-              layer.pixels[idx(px, py)] = c;
-          }
-    };
-    const body = frame.layers[0],
-      detail = frame.layers[1],
-      shade = frame.layers[2];
-    drawEllipse(body, cx, cy - 48, 18, 21, colors.outline);
-    drawRect(body, cx - 20, cy - 28, 40, 54, colors.outline);
-    drawRect(body, cx - 16, cy - 25, 32, 50, colors.cloth);
-    drawEllipse(detail, cx + lx * 6, cy - 50, 11, 13, colors.skin);
-    drawRect(detail, cx - 18, cy - 21, 36, 8, colors.leather);
-    drawRect(detail, cx + lx * 18, cy - 18, 10, 32, colors.leather);
-    drawRect(detail, cx - lx * 25, cy - 18, 9, 29, colors.leather);
-    drawRect(detail, cx - 16 + step, cy + 26, 10, 30, colors.leather);
-    drawRect(detail, cx + 6 - step, cy + 26, 10, 30, colors.leather);
-    drawRect(shade, cx - 18, cy + 12, 36, 7, colors.shadow);
-    drawRect(shade, cx + lx * 2, cy - 63, 12, 5, colors.highlight);
-    if (isAttack) {
-      drawRect(
-        detail,
-        cx + lx * (28 + swing),
-        cy - 24 - swing,
-        35,
-        5,
-        colors.metal,
-      );
-      drawRect(
-        detail,
-        cx + lx * (62 + swing),
-        cy - 27 - swing,
-        8,
-        11,
-        colors.metal,
-      );
-    } else {
-      drawRect(detail, cx + lx * 30, cy - 30, 5, 45, colors.metal);
-      drawRect(detail, cx + lx * 27, cy + 10, 12, 18, colors.metal);
-    }
-    project.frames.push(frame);
-    if (!project.activeFrameId) project.activeFrameId = frame.id;
-  }
-  project.palette = [
-    ...new Set([...Object.values(colors), ...DEFAULT_PALETTE]),
-  ];
-  return project;
 }
 
 function App() {
@@ -611,17 +272,13 @@ function App() {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.imageSmoothingEnabled = false;
-    for (const layer of frameToDraw.layers) {
-      if (!layer.visible) continue;
-      for (let i = 0; i < layer.pixels.length; i++) {
-        const px = layer.pixels[i];
-        if (!px) continue;
-        const x = i % SIZE,
-          y = Math.floor(i / SIZE);
-        ctx.fillStyle = hexToRgba(px, layer.opacity);
-        ctx.fillRect(x * scale, y * scale, scale, scale);
-      }
-    }
+    ctx.drawImage(
+      compositeFrame(frameToDraw, { mode: "transparent", color: "#0f172a" }),
+      0,
+      0,
+      SIZE * scale,
+      SIZE * scale,
+    );
     ctx.restore();
   }
   function drawDynamicGrid(ctx) {
@@ -912,30 +569,10 @@ function App() {
     });
   }
   function replaceGlobalColor() {
-    updateProject((p) =>
-      p.frames.forEach((f) =>
-        f.layers.forEach((l) => {
-          l.pixels = l.pixels.map((px) =>
-            String(px).toLowerCase() === replaceFrom.toLowerCase()
-              ? replaceTo
-              : px,
-          );
-        }),
-      ),
-    );
+    updateProject((p) => replaceProjectColor(p, replaceFrom, replaceTo));
   }
   function limitColorsNow() {
-    const allowed = usedColors.slice(0, maxColors).map(([c]) => c);
-    if (!allowed.length) return;
-    updateProject((p) =>
-      p.frames.forEach((f) =>
-        f.layers.forEach((l) => {
-          l.pixels = l.pixels.map((px) =>
-            px && !allowed.includes(px) ? allowed[0] : px,
-          );
-        }),
-      ),
-    );
+    updateProject((p) => limitProjectColors(p, maxColors));
   }
   function importPalette(e) {
     const f = e.target.files[0];
@@ -981,95 +618,24 @@ function App() {
   function exportAtlasJson() {
     const asset = slug(project.godot.asset),
       anim = slug(project.godot.animation);
-    const frames = Object.fromEntries(
-      project.frames.map((f, i) => [
-        `${anim}_${String(i).padStart(2, "0")}`,
-        {
-          frame: { x: i * SIZE, y: 0, w: SIZE, h: SIZE },
-          duration: f.duration || Math.round(1000 / project.godot.fps),
-        },
-      ]),
-    );
     downloadText(
       `${asset}_${anim}.atlas.json`,
-      JSON.stringify(
-        {
-          meta: {
-            image: `${asset}_${anim}_sheet.png`,
-            size: { w: SIZE * project.frames.length, h: SIZE },
-            scale: 1,
-          },
-          frames,
-        },
-        null,
-        2,
-      ),
+      JSON.stringify(atlasMetadata(project), null, 2),
     );
   }
   function exportGodotJson() {
-    const asset = slug(project.godot.asset),
-      anim = slug(project.godot.animation);
-    const metadata = {
-      asset,
-      engine: "godot",
-      godot_version: "4.x",
-      frame_width: SIZE,
-      frame_height: SIZE,
-      background: project.background,
-      import: {
-        filter: false,
-        mipmaps: false,
-        repeat: "disabled",
-        compression: "lossless",
-        texture_type: "2D",
-      },
-      files: {
-        spritesheet: `res://assets/${asset}/spritesheets/${asset}_${anim}_sheet.png`,
-        atlas: `res://assets/${asset}/metadata/${asset}_${anim}.atlas.json`,
-      },
-      animations: [
-        {
-          name: anim,
-          direction: project.godot.direction,
-          fps: Number(project.godot.fps),
-          loop: Boolean(project.godot.loop),
-          frames: project.frames.length,
-          layout: "horizontal",
-          frame_rects: project.frames.map((_, i) => ({
-            x: i * SIZE,
-            y: 0,
-            w: SIZE,
-            h: SIZE,
-          })),
-        },
-      ],
-    };
-    downloadText(`${asset}.animations.json`, JSON.stringify(metadata, null, 2));
+    const asset = slug(project.godot.asset);
+    downloadText(
+      `${asset}.animations.json`,
+      JSON.stringify(godotMetadata(project), null, 2),
+    );
   }
   function exportUnityJson() {
     const asset = slug(project.godot.asset),
       anim = slug(project.godot.animation);
-    const metadata = {
-      asset,
-      engine: "unity",
-      background: project.background,
-      pixelsPerUnit: SIZE,
-      filterMode: "Point",
-      compression: "None",
-      spriteMode: "Multiple",
-      sheet: `${asset}_${anim}_sheet.png`,
-      frames: project.frames.map((_, i) => ({
-        name: `${anim}_${i}`,
-        x: i * SIZE,
-        y: 0,
-        width: SIZE,
-        height: SIZE,
-        pivot: { x: 0.5, y: 0.5 },
-      })),
-    };
     downloadText(
       `${asset}_${anim}.unity.json`,
-      JSON.stringify(metadata, null, 2),
+      JSON.stringify(unityMetadata(project), null, 2),
     );
   }
   function saveJson() {
@@ -1157,7 +723,7 @@ function App() {
     } catch {
       setProject(
         aiOperation === "generate"
-          ? generateHeuristicProject(prompt, project)
+          ? generatePixelArtFromPrompt(prompt, project)
           : project,
       );
       setBridgeStatus("local-prompt");
