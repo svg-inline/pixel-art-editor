@@ -13,15 +13,15 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
-    "tsx": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "zod": "latest",
-    "concurrently": "latest"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "vite": "8.1.0",
+    "typescript": "6.0.3",
+    "tsx": "4.22.4",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "zod": "4.4.3",
+    "concurrently": "10.0.3"
   },
   "devDependencies": {}
 }

@@ -1,6 +1,6 @@
 # Pixel ART 256x256 + MCP + Bridge + Godot/Unity
 
-Editor web para pixel art 256x256 com camadas, frames, spritesheets, preview animado, integração MCP por arquivo compartilhado e bridge HTTP/SSE.
+Editor web local-first para pixel art 256x256 com camadas, frames, spritesheets, preview animado, bridge HTTP/SSE, ferramentas MCP e exportação para Godot/Unity.
 
 ## Instalar
 
@@ -8,7 +8,7 @@ Editor web para pixel art 256x256 com camadas, frames, spritesheets, preview ani
 npm install
 ```
 
-## Rodar editor com integração MCP em tempo real
+## Rodar editor com integração em tempo real
 
 ```bash
 npm run dev
@@ -16,14 +16,14 @@ npm run dev
 
 Isso sobe:
 
-- `bridge`: `http://localhost:8787`
-- `web`: Vite
+- bridge local: `http://127.0.0.1:8787`
+- web: Vite
 
-O editor conecta na bridge por SSE. Quando o MCP altera `pixel-project.mcp.json`, o canvas atualiza sozinho.
+O editor conecta na bridge por SSE. Quando o MCP altera o projeto compartilhado, o canvas, timeline e preview animado atualizam automaticamente.
 
 ## Rodar MCP
 
-O MCP é stdio. Use na configuração do ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
+Use no ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
 
 ```json
 {
@@ -40,58 +40,86 @@ O MCP é stdio. Use na configuração do ChatGPT/Cursor/Claude com o mesmo `cwd`
 }
 ```
 
-## Fluxo Editor ↔ MCP
+## O que foi atualizado nesta versão
 
-1. Abra o editor com `npm run dev`.
-2. Configure o MCP apontando para o mesmo projeto.
-3. Peça para a IA usar ferramentas como `draw_sprite_from_prompt`, `set_pixel`, `draw_rect`, `create_frame` ou `apply_project_json`.
-4. O MCP grava `pixel-project.mcp.json`.
-5. A bridge observa o arquivo e manda o projeto para o editor em tempo real.
-6. O canvas, preview e timeline atualizam automaticamente.
+- `shared/pixel-core.ts` virou o núcleo comum: schema, normalização, RLE compacto, geração heurística, edição, paleta, QA, metadata Godot/Unity e composição RGBA.
+- Bridge reescrita com escrita atômica, fila de escrita, projeto em formato compacto no disco, leitura expandida para o editor, body limit e bind local em `127.0.0.1`.
+- Camada `server/ai/provider.ts`: usa provider local por padrão e aceita um provider HTTP externo via `PIXEL_AI_ENDPOINT` / `PIXEL_AI_API_KEY`.
+- MCP ganhou ferramentas reais de workflow: geração, edição por seleção, variação, recolor, limite de paleta, preview PNG base64, spritesheet PNG base64 e pacote Godot.
+- Web agora lê JSON compacto, envia seleção/operação no prompt e continua com fallback local quando a bridge está offline.
+- Godot ganhou addon real em `godot/addons/pixel_art_mcp/` com dock para prompt, metadata e criação de `SpriteFrames`.
+- Dependências foram pinadas e foram adicionados `tsconfig.json` e `.gitignore` para arquivos runtime.
 
-## Implementado
+## Ferramentas MCP principais
 
-- Integração real Editor ↔ MCP via bridge local HTTP/SSE.
-- Preview visual automático da arte gerada pela IA/MCP.
-- Spritesheets com múltiplos frames.
-- Timeline com adicionar, duplicar, excluir, reordenar e selecionar frame.
-- Preview animado com FPS e loop.
-- Onion skin do frame anterior.
-- Ferramentas: lápis, borracha, bucket, picker, seleção, dithering.
-- Seleção: copiar, recortar, colar, mover, espelhar H/V, rotacionar 90° e aplicar dithering.
-- Paletas: swatches, importar/exportar paleta, cores usadas, substituir cor global e limitar cores.
-- Persistência backend local: projeto compartilhado, histórico, galeria e login local simplificado via endpoints.
-- Painel de prompt no editor: aplica prompt no canvas. Com bridge ligada usa backend; sem bridge usa fallback local determinístico.
-- Exportação: PNG por frame, spritesheet horizontal, atlas JSON, Godot JSON e Unity JSON.
-- Controle de qualidade: limite de cores, detecção de fundo opaco e alerta de quadriculado falso.
-
-## Ferramentas MCP
-
-- `create_frame`
-- `duplicate_frame`
-- `set_active_frame`
-- `create_layer`
-- `set_pixel`
-- `draw_rect`
-- `draw_line`
-- `clear_layer`
-- `set_godot_metadata`
+- `generate_pixel_art`
 - `draw_sprite_from_prompt`
-- `apply_project_json`
+- `edit_pixel_art`
+- `edit_selection`
+- `replace_subject`
+- `create_variation`
+- `recolor_palette`
+- `limit_palette`
+- `extend_animation`
+- `get_preview_png`
+- `get_spritesheet_png`
+- `export_godot_asset`
+- `quality_report`
 - `get_project_json`
+- `get_project_compact_json`
 - `get_godot_json`
+- `get_atlas_json`
+- `get_unity_json`
 
 ## Endpoints da bridge
 
 - `GET /api/events`: SSE para atualizações do projeto.
-- `GET /api/project`: lê projeto atual.
-- `POST /api/project`: salva projeto atual.
-- `POST /api/ai-prompt`: aplica prompt heurístico e salva no projeto compartilhado.
-- `POST /api/login`: login local simplificado.
-- `GET /api/gallery`: lista galeria local.
-- `POST /api/gallery`: salva projeto na galeria local.
-- `GET /api/gallery/:id`: carrega projeto da galeria.
-- `GET /api/history`: lista histórico local.
+- `GET /api/project`: lê projeto expandido.
+- `GET /api/project.compact`: lê projeto compacto RLE.
+- `POST /api/project`: salva projeto.
+- `POST /api/ai-prompt`: aplica prompt com `operation`, `project` e `selection`.
+- `POST /api/tools/edit-selection`: edita seleção.
+- `POST /api/tools/recolor-palette`: substitui cor global.
+- `POST /api/tools/limit-colors`: limita paleta.
+- `POST /api/tools/create-variation`: cria variação.
+- `POST /api/tools/extend-animation`: estende animação.
+- `GET /api/preview.png`: preview PNG do frame.
+- `GET /api/spritesheet.png`: spritesheet horizontal PNG.
+- `GET /api/export/godot`: metadata Godot.
+- `GET /api/export/atlas`: atlas JSON.
+- `GET /api/export/unity`: metadata Unity.
+- `GET /api/quality`: relatório de QA.
+- `GET/POST /api/gallery`: galeria local.
+- `GET /api/history`: histórico local.
+
+## Provider de IA externo
+
+Por padrão, o projeto usa um gerador local determinístico para validar fluxo, edição e integração. Para conectar IA externa, suba um endpoint HTTP que receba:
+
+```json
+{
+  "prompt": "crie personagem idle oeste",
+  "operation": "generate",
+  "project": {},
+  "selection": {"x": 80, "y": 60, "w": 64, "h": 96}
+}
+```
+
+E retorne um projeto no mesmo schema. Depois rode:
+
+```bash
+PIXEL_AI_ENDPOINT="http://127.0.0.1:9000/generate" PIXEL_AI_API_KEY="opcional" npm run bridge
+```
+
+## Segurança local
+
+A bridge escuta por padrão em `127.0.0.1`. Para exigir token local:
+
+```bash
+PIXEL_BRIDGE_TOKEN="um-token-local" npm run bridge
+```
+
+Nesse caso, envie `x-pixel-token` ou `Authorization: Bearer <token>` nas chamadas HTTP.
 
 ## Exportação para Godot 4
 
@@ -100,6 +128,7 @@ Arquivos exportados:
 - `<asset>_<animation>_sheet.png`
 - `<asset>_<animation>.atlas.json`
 - `<asset>.animations.json`
+- `<asset>.spriteframes.tres` gerado pelo addon/script dentro do Godot
 
 Estrutura recomendada:
 
@@ -119,6 +148,10 @@ Configuração de importação no Godot:
 - Repeat: Disabled
 - Compression: Lossless
 
-## Observação importante
+## Testado
 
-O painel de prompt interno não chama um LLM externo. Ele aplica um gerador local determinístico para validar fluxo visual, frames e integração. Para IA real, use o MCP configurado no cliente que suporta tools; o editor receberá as alterações automaticamente pela bridge.
+```bash
+npm run build
+```
+
+Também foi validado que a bridge gera projeto por prompt, exporta metadata Godot e serve preview PNG.

@@ -1,303 +1,108 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
+import { process } from "zod/v4/core";
+import {
+  activeFrameOf,
+  atlasMetadata,
+  blankFrame,
+  blankLayer,
+  clearLayer,
+  compactProject,
+  compositeFrameRgba,
+  createVariation,
+  drawLine,
+  drawRect,
+  editSelection,
+  expandProject,
+  extendAnimation,
+  frameByName,
+  generatePixelArtFromPrompt,
+  godotMetadata,
+  layerByName,
+  limitColors,
+  qualityReport,
+  replaceGlobalColor,
+  setPixel,
+  SIZE,
+  slug,
+  uid,
+  unityMetadata,
+  type Direction,
+  type Project,
+} from "../shared/pixel-core.ts";
+import { encodePngRgba } from "./png.ts";
 
-const SIZE = 256;
-type Layer = {
-  id: string;
-  name: string;
-  visible: boolean;
-  opacity: number;
-  pixels: (string | null)[];
-};
-type Frame = {
-  id: string;
-  name: string;
-  duration: number;
-  layers: Layer[];
-  activeLayerId: string;
-};
-type GodotMeta = {
-  asset: string;
-  animation: string;
-  direction: "N" | "NE" | "E" | "SE" | "S" | "SW" | "W" | "NW";
-  fps: number;
-  loop: boolean;
-};
-type Project = {
-  size: number;
-  frames: Frame[];
-  activeFrameId: string;
-  palette?: string[];
-  godot?: GodotMeta;
-  quality?: Record<string, unknown>;
-};
-const projectPath =
-  process.env.PIXEL_PROJECT_PATH || "./pixel-project.mcp.json";
-const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-const index = (x: number, y: number) => y * SIZE + x;
-const slug = (v: string) =>
-  String(v || "asset")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "asset";
-const defaultPalette = [
-  "#111827",
-  "#374151",
-  "#6b7280",
-  "#d1d5db",
-  "#f8fafc",
-  "#7f1d1d",
-  "#b45309",
-  "#f59e0b",
-  "#166534",
-  "#22c55e",
-  "#1d4ed8",
-  "#60a5fa",
-];
-const blankLayer = (name = "Layer"): Layer => ({
-  id: id(),
-  name,
-  visible: true,
-  opacity: 1,
-  pixels: Array(SIZE * SIZE).fill(null),
-});
-const blankFrame = (name = "Frame 1"): Frame => {
-  const l = blankLayer("Base");
-  return { id: id(), name, duration: 100, layers: [l], activeLayerId: l.id };
-};
-function clone<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v));
+const projectPath = path.resolve(
+  process.env.PIXEL_PROJECT_PATH || "./pixel-project.mcp.json",
+);
+const writeCompact = process.env.PIXEL_PROJECT_COMPACT !== "0";
+function readJson(filePath: string, fallback: any) {
+  if (!fs.existsSync(filePath)) return fallback;
+  const text = fs.readFileSync(filePath, "utf8");
+  return text.trim() ? JSON.parse(text) : fallback;
 }
-function normalizeProject(input: any): Project {
-  const p: any = input && typeof input === "object" ? clone(input) : {};
-  p.size = SIZE;
-  if (!Array.isArray(p.frames) || !p.frames.length) {
-    const layers =
-      Array.isArray(p.layers) && p.layers.length
-        ? p.layers
-        : [blankLayer("Base")];
-    p.frames = [
-      {
-        id: id(),
-        name: "Frame 1",
-        duration: 100,
-        layers,
-        activeLayerId: p.activeLayerId || layers[0].id,
-      },
-    ];
-    delete p.layers;
-  }
-  p.frames = p.frames.map((f: any, i: number) => {
-    const layers =
-      Array.isArray(f.layers) && f.layers.length
-        ? f.layers
-        : [blankLayer("Base")];
-    layers.forEach((l: any, li: number) => {
-      l.id ||= id();
-      l.name ||= `Layer ${li + 1}`;
-      l.visible = l.visible !== false;
-      l.opacity = Number.isFinite(Number(l.opacity)) ? Number(l.opacity) : 1;
-      if (!Array.isArray(l.pixels) || l.pixels.length !== SIZE * SIZE)
-        l.pixels = Array(SIZE * SIZE).fill(null);
-    });
-    return {
-      ...f,
-      id: f.id || id(),
-      name: f.name || `Frame ${i + 1}`,
-      duration: Number(f.duration || 100),
-      layers,
-      activeLayerId: f.activeLayerId || layers[0].id,
-    };
-  });
-  p.activeFrameId ||= p.frames[0].id;
-  if (!p.frames.some((f: Frame) => f.id === p.activeFrameId))
-    p.activeFrameId = p.frames[0].id;
-  p.palette =
-    Array.isArray(p.palette) && p.palette.length ? p.palette : defaultPalette;
-  p.godot = {
-    ...{
-      asset: "pixel_asset",
-      animation: "idle_w",
-      direction: "W",
-      fps: 6,
-      loop: true,
-    },
-    ...(p.godot || {}),
-  };
-  return p as Project;
+function atomicWrite(filePath: string, data: string | Buffer) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, filePath);
 }
-let project: Project = fs.existsSync(projectPath)
-  ? normalizeProject(JSON.parse(fs.readFileSync(projectPath, "utf8")))
-  : normalizeProject({ frames: [blankFrame()] });
-const save = () =>
-  fs.writeFileSync(
+let project: Project = expandProject(readJson(projectPath, {}));
+function reload() {
+  project = expandProject(readJson(projectPath, project));
+  return project;
+}
+function save() {
+  project = expandProject(project);
+  atomicWrite(
     projectPath,
-    JSON.stringify(normalizeProject(project), null, 2),
+    JSON.stringify(writeCompact ? compactProject(project) : project, null, 2),
   );
-const activeFrame = () =>
-  project.frames.find((f) => f.id === project.activeFrameId) ||
-  project.frames[0];
-const frameByNameOrActive = (name?: string) =>
-  name
-    ? project.frames.find((f) => f.name === name || f.id === name)
-    : activeFrame();
-const layerByName = (frame: Frame, name?: string) =>
-  name
-    ? frame.layers.find((l) => l.name === name || l.id === name)
-    : frame.layers.find((l) => l.id === frame.activeLayerId) || frame.layers[0];
-function drawRect(
-  layer: Layer,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  color: string,
-) {
-  for (let yy = y; yy < Math.min(SIZE, y + h); yy++)
-    for (let xx = x; xx < Math.min(SIZE, x + w); xx++)
-      if (xx >= 0 && yy >= 0) layer.pixels[index(xx, yy)] = color;
 }
-function drawEllipse(
-  layer: Layer,
-  x: number,
-  y: number,
-  rx: number,
-  ry: number,
-  color: string,
-) {
-  for (let yy = -ry; yy <= ry; yy++)
-    for (let xx = -rx; xx <= rx; xx++)
-      if ((xx * xx) / (rx * rx) + (yy * yy) / (ry * ry) <= 1) {
-        const px = x + xx,
-          py = y + yy;
-        if (px >= 0 && py >= 0 && px < SIZE && py < SIZE)
-          layer.pixels[index(px, py)] = color;
-      }
+function ok(text: string) {
+  return { content: [{ type: "text" as const, text }] };
 }
-function generateFromPrompt(prompt: string) {
-  const lower = prompt.toLowerCase();
-  const direction =
-    lower.includes("oeste") || lower.includes("west")
-      ? "W"
-      : lower.includes("leste") || lower.includes("east")
-        ? "E"
-        : lower.includes("norte")
-          ? "N"
-          : "S";
-  const isWalk = /walk|andar|movimento|correr/.test(lower);
-  const isAttack = /attack|ataque|golpe/.test(lower);
-  const frameCount = isAttack ? 6 : isWalk ? 8 : 4;
-  const anim = `${isAttack ? "attack" : isWalk ? "walk" : "idle"}_${direction.toLowerCase()}`;
-  project = normalizeProject(project);
-  project.frames = [];
-  project.activeFrameId = "";
-  project.godot = {
-    ...(project.godot as GodotMeta),
-    animation: anim,
-    direction: direction as GodotMeta["direction"],
-    fps: isAttack ? 10 : isWalk ? 8 : 6,
-  };
-  const c = {
-    outline: "#111827",
-    cloth: "#374151",
-    leather: "#78350f",
-    skin: "#d6a878",
-    metal: "#9ca3af",
-    shadow: "#1f2937",
-    highlight: "#facc15",
-  };
-  for (let i = 0; i < frameCount; i++) {
-    const f = blankFrame(`Frame ${i + 1}`);
-    f.layers = [
-      blankLayer("Silhueta"),
-      blankLayer("Detalhes"),
-      blankLayer("Sombra/Luz"),
-    ];
-    f.activeLayerId = f.layers[1].id;
-    const body = f.layers[0],
-      detail = f.layers[1],
-      shade = f.layers[2];
-    const bob = Math.round(Math.sin((i / frameCount) * Math.PI * 2) * 2);
-    const step = isWalk
-      ? Math.round(Math.sin((i / frameCount) * Math.PI * 2) * 5)
-      : 0;
-    const swing = isAttack ? i * 4 : 0;
-    const lx = direction === "W" ? -1 : 1;
-    const cx = 128,
-      cy = 128 + bob;
-    drawEllipse(body, cx, cy - 48, 18, 21, c.outline);
-    drawRect(body, cx - 20, cy - 28, 40, 54, c.outline);
-    drawRect(body, cx - 16, cy - 25, 32, 50, c.cloth);
-    drawEllipse(detail, cx + lx * 6, cy - 50, 11, 13, c.skin);
-    drawRect(detail, cx - 18, cy - 21, 36, 8, c.leather);
-    drawRect(detail, cx + lx * 18, cy - 18, 10, 32, c.leather);
-    drawRect(detail, cx - lx * 25, cy - 18, 9, 29, c.leather);
-    drawRect(detail, cx - 16 + step, cy + 26, 10, 30, c.leather);
-    drawRect(detail, cx + 6 - step, cy + 26, 10, 30, c.leather);
-    drawRect(shade, cx - 18, cy + 12, 36, 7, c.shadow);
-    drawRect(shade, cx + lx * 2, cy - 63, 12, 5, c.highlight);
-    if (isAttack) {
-      drawRect(detail, cx + lx * (28 + swing), cy - 24 - swing, 35, 5, c.metal);
-      drawRect(detail, cx + lx * (62 + swing), cy - 27 - swing, 8, 11, c.metal);
-    } else {
-      drawRect(detail, cx + lx * 30, cy - 30, 5, 45, c.metal);
-      drawRect(detail, cx + lx * 27, cy + 10, 12, 18, c.metal);
-    }
-    project.frames.push(f);
-    if (!project.activeFrameId) project.activeFrameId = f.id;
-  }
-  project.palette = [...new Set([...Object.values(c), ...defaultPalette])];
-  save();
+function getFrame(frame?: string) {
+  reload();
+  const f = frameByName(project, frame);
+  if (!f) throw new Error("Frame não encontrado");
+  return f;
 }
-function godotMetadata() {
-  const g = project.godot || {
-    asset: "pixel_asset",
-    animation: "idle_w",
-    direction: "W",
-    fps: 6,
-    loop: true,
-  };
-  const asset = slug(g.asset),
-    anim = slug(g.animation);
-  return {
-    asset,
-    engine: "godot",
-    godot_version: "4.x",
-    frame_width: SIZE,
-    frame_height: SIZE,
-    import: {
-      filter: false,
-      mipmaps: false,
-      repeat: "disabled",
-      compression: "lossless",
-      texture_type: "2D",
-    },
-    files: {
-      spritesheet: `res://assets/${asset}/spritesheets/${asset}_${anim}_sheet.png`,
-      atlas: `res://assets/${asset}/metadata/${asset}_${anim}.atlas.json`,
-    },
-    animations: [
-      {
-        name: anim,
-        direction: g.direction,
-        fps: g.fps,
-        loop: g.loop,
-        frames: project.frames.length,
-        layout: "horizontal",
-        frame_rects: project.frames.map((_, i) => ({
-          x: i * SIZE,
-          y: 0,
-          w: SIZE,
-          h: SIZE,
-        })),
-      },
-    ],
-  };
+function getLayer(frame: any, layer?: string) {
+  const l = layerByName(frame, layer);
+  if (!l) throw new Error("Camada não encontrada");
+  return l;
 }
-const server = new McpServer({ name: "pixel-art-256-mcp", version: "2.0.0" });
+function previewBase64(frameIndex = 0) {
+  reload();
+  const frame =
+    project.frames[
+      Math.max(0, Math.min(project.frames.length - 1, frameIndex))
+    ] || activeFrameOf(project);
+  return encodePngRgba(SIZE, SIZE, compositeFrameRgba(frame)).toString(
+    "base64",
+  );
+}
+function spritesheetBase64() {
+  reload();
+  const width = SIZE * project.frames.length;
+  const rgba = new Uint8Array(width * SIZE * 4);
+  project.frames.forEach((frame, fi) => {
+    const frameRgba = compositeFrameRgba(frame);
+    for (let y = 0; y < SIZE; y++)
+      rgba.set(
+        frameRgba.subarray(y * SIZE * 4, y * SIZE * 4 + SIZE * 4),
+        (y * width + fi * SIZE) * 4,
+      );
+  });
+  return encodePngRgba(width, SIZE, rgba).toString("base64");
+}
+
+const server = new McpServer({ name: "pixel-art-256-mcp", version: "3.0.0" });
+
 server.tool(
   "create_frame",
   "Cria um frame novo para spritesheet/animação.",
@@ -306,51 +111,58 @@ server.tool(
     duration: z.number().int().min(1).max(5000).default(100),
   },
   async ({ name, duration }) => {
+    reload();
     const f = blankFrame(name);
     f.duration = duration;
     project.frames.push(f);
     project.activeFrameId = f.id;
     save();
-    return { content: [{ type: "text", text: `Frame criado: ${name}` }] };
+    return ok(`Frame criado: ${name}`);
   },
 );
+
 server.tool("duplicate_frame", "Duplica o frame ativo.", {}, async () => {
-  const f = clone(activeFrame());
-  f.id = id();
+  reload();
+  const source = activeFrameOf(project);
+  const f = JSON.parse(JSON.stringify(source));
+  f.id = uid();
   f.name = `${f.name} copy`;
-  f.layers.forEach((l) => (l.id = id()));
+  f.layers.forEach((l: any) => (l.id = uid()));
   f.activeLayerId = f.layers[0].id;
   project.frames.push(f);
   project.activeFrameId = f.id;
   save();
-  return { content: [{ type: "text", text: "Frame duplicado." }] };
+  return ok("Frame duplicado.");
 });
+
 server.tool(
   "set_active_frame",
   "Seleciona frame por nome ou id.",
   { frame: z.string() },
   async ({ frame }) => {
-    const f = frameByNameOrActive(frame);
+    reload();
+    const f = frameByName(project, frame);
     if (!f) throw new Error("Frame não encontrado");
     project.activeFrameId = f.id;
     save();
-    return { content: [{ type: "text", text: `Frame ativo: ${f.name}` }] };
+    return ok(`Frame ativo: ${f.name}`);
   },
 );
+
 server.tool(
   "create_layer",
   "Cria uma camada nova no frame ativo.",
   { name: z.string(), frame: z.string().optional() },
   async ({ name, frame }) => {
-    const f = frameByNameOrActive(frame);
-    if (!f) throw new Error("Frame não encontrado");
+    const f = getFrame(frame);
     const l = blankLayer(name);
     f.layers.push(l);
     f.activeLayerId = l.id;
     save();
-    return { content: [{ type: "text", text: `Camada criada: ${name}` }] };
+    return ok(`Camada criada: ${name}`);
   },
 );
+
 server.tool(
   "set_pixel",
   "Pinta 1 pixel em x/y no frame/camada.",
@@ -362,15 +174,13 @@ server.tool(
     frame: z.string().optional(),
   },
   async ({ x, y, color, layer, frame }) => {
-    const f = frameByNameOrActive(frame);
-    if (!f) throw new Error("Frame não encontrado");
-    const l = layerByName(f, layer);
-    if (!l) throw new Error("Camada não encontrada");
-    l.pixels[index(x, y)] = color;
+    const f = getFrame(frame);
+    setPixel(getLayer(f, layer), x, y, color);
     save();
-    return { content: [{ type: "text", text: "ok" }] };
+    return ok("ok");
   },
 );
+
 server.tool(
   "draw_rect",
   "Desenha retângulo preenchido.",
@@ -384,15 +194,13 @@ server.tool(
     frame: z.string().optional(),
   },
   async ({ x, y, w, h, color, layer, frame }) => {
-    const f = frameByNameOrActive(frame);
-    if (!f) throw new Error("Frame não encontrado");
-    const l = layerByName(f, layer);
-    if (!l) throw new Error("Camada não encontrada");
-    drawRect(l, x, y, w, h, color);
+    const f = getFrame(frame);
+    drawRect(getLayer(f, layer), x, y, w, h, color);
     save();
-    return { content: [{ type: "text", text: "ok" }] };
+    return ok("ok");
   },
 );
+
 server.tool(
   "draw_line",
   "Desenha linha Bresenham.",
@@ -406,46 +214,25 @@ server.tool(
     frame: z.string().optional(),
   },
   async ({ x1, y1, x2, y2, color, layer, frame }) => {
-    const f = frameByNameOrActive(frame);
-    if (!f) throw new Error("Frame não encontrado");
-    const l = layerByName(f, layer);
-    if (!l) throw new Error("Camada não encontrada");
-    let dx = Math.abs(x2 - x1),
-      sx = x1 < x2 ? 1 : -1,
-      dy = -Math.abs(y2 - y1),
-      sy = y1 < y2 ? 1 : -1,
-      err = dx + dy;
-    while (true) {
-      l.pixels[index(x1, y1)] = color;
-      if (x1 === x2 && y1 === y2) break;
-      const e2 = 2 * err;
-      if (e2 >= dy) {
-        err += dy;
-        x1 += sx;
-      }
-      if (e2 <= dx) {
-        err += dx;
-        y1 += sy;
-      }
-    }
+    const f = getFrame(frame);
+    drawLine(getLayer(f, layer), x1, y1, x2, y2, color);
     save();
-    return { content: [{ type: "text", text: "ok" }] };
+    return ok("ok");
   },
 );
+
 server.tool(
   "clear_layer",
   "Limpa camada.",
   { layer: z.string().optional(), frame: z.string().optional() },
   async ({ layer, frame }) => {
-    const f = frameByNameOrActive(frame);
-    if (!f) throw new Error("Frame não encontrado");
-    const l = layerByName(f, layer);
-    if (!l) throw new Error("Camada não encontrada");
-    l.pixels.fill(null);
+    const f = getFrame(frame);
+    clearLayer(getLayer(f, layer));
     save();
-    return { content: [{ type: "text", text: "ok" }] };
+    return ok("ok");
   },
 );
+
 server.tool(
   "set_godot_metadata",
   "Define metadados de exportação compatíveis com Godot 4.",
@@ -459,56 +246,282 @@ server.tool(
     loop: z.boolean().default(true),
   },
   async ({ asset, animation, direction, fps, loop }) => {
-    project.godot = { asset, animation, direction, fps, loop };
-    save();
-    return {
-      content: [{ type: "text", text: "Metadados Godot atualizados." }],
+    reload();
+    project.godot = {
+      asset,
+      animation,
+      direction: direction as Direction,
+      fps,
+      loop,
     };
+    save();
+    return ok("Metadados Godot atualizados.");
   },
 );
+
 server.tool(
-  "draw_sprite_from_prompt",
-  "Gera um sprite animado simples por prompt e salva no projeto compartilhado com o editor.",
+  "generate_pixel_art",
+  "Gera sprite/frames a partir de prompt e salva no projeto compartilhado.",
   { prompt: z.string() },
   async ({ prompt }) => {
-    generateFromPrompt(prompt);
+    reload();
+    project = generatePixelArtFromPrompt(prompt, project);
+    save();
+    return ok(
+      `Pixel art gerada. Frames: ${project.frames.length}, animação: ${project.godot.animation}`,
+    );
+  },
+);
+
+server.tool(
+  "draw_sprite_from_prompt",
+  "Alias compatível: gera sprite/frames por prompt.",
+  { prompt: z.string() },
+  async ({ prompt }) => {
+    reload();
+    project = generatePixelArtFromPrompt(prompt, project);
+    save();
+    return ok(`Prompt aplicado. Frames: ${project.frames.length}`);
+  },
+);
+
+server.tool(
+  "edit_pixel_art",
+  "Edita o projeto atual com instrução em linguagem natural.",
+  { prompt: z.string(), layer: z.string().optional() },
+  async ({ prompt, layer }) => {
+    reload();
+    project = editSelection(project, prompt, null, layer);
+    save();
+    return ok("Edição aplicada no projeto.");
+  },
+);
+
+server.tool(
+  "edit_selection",
+  "Edita apenas uma seleção retangular.",
+  {
+    prompt: z.string(),
+    x: z.number().int().min(0).max(255),
+    y: z.number().int().min(0).max(255),
+    w: z.number().int().min(1).max(256),
+    h: z.number().int().min(1).max(256),
+    layer: z.string().optional(),
+  },
+  async ({ prompt, x, y, w, h, layer }) => {
+    reload();
+    project = editSelection(
+      project,
+      prompt,
+      { x, y, w: w - 1, h: h - 1 },
+      layer,
+    );
+    save();
+    return ok("Seleção editada.");
+  },
+);
+
+server.tool(
+  "replace_subject",
+  "Substitui/reestrutura a área selecionada usando uma descrição.",
+  {
+    prompt: z.string(),
+    x: z.number().int().min(0).max(255).default(88),
+    y: z.number().int().min(0).max(255).default(72),
+    w: z.number().int().min(1).max(256).default(80),
+    h: z.number().int().min(1).max(256).default(104),
+    layer: z.string().optional(),
+  },
+  async ({ prompt, x, y, w, h, layer }) => {
+    reload();
+    project = editSelection(
+      project,
+      prompt,
+      { x, y, w: w - 1, h: h - 1 },
+      layer,
+    );
+    save();
+    return ok("Objeto/sujeito substituído na seleção.");
+  },
+);
+
+server.tool(
+  "create_variation",
+  "Cria variação do projeto atual: mirror_h, mirror_v ou shift_right.",
+  {
+    variant: z
+      .enum(["mirror_h", "mirror_v", "shift_right"])
+      .default("mirror_h"),
+  },
+  async ({ variant }) => {
+    reload();
+    project = createVariation(project, variant);
+    save();
+    return ok(`Variação criada: ${variant}`);
+  },
+);
+
+server.tool(
+  "recolor_palette",
+  "Substitui uma cor globalmente.",
+  {
+    from: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    to: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  },
+  async ({ from, to }) => {
+    reload();
+    project = replaceGlobalColor(project, from, to);
+    save();
+    return ok(`Cor substituída: ${from} → ${to}`);
+  },
+);
+
+server.tool(
+  "limit_palette",
+  "Limita a arte às cores mais usadas.",
+  { maxColors: z.number().int().min(2).max(256).default(32) },
+  async ({ maxColors }) => {
+    reload();
+    project = limitColors(project, maxColors);
+    save();
+    return ok(`Paleta limitada para ${maxColors} cores.`);
+  },
+);
+
+server.tool(
+  "extend_animation",
+  "Estende a animação até totalFrames, duplicando frames-base.",
+  { totalFrames: z.number().int().min(1).max(64).default(8) },
+  async ({ totalFrames }) => {
+    reload();
+    project = extendAnimation(project, totalFrames);
+    save();
+    return ok(`Animação com ${project.frames.length} frames.`);
+  },
+);
+
+server.tool(
+  "get_preview_png",
+  "Retorna PNG base64 do frame selecionado.",
+  { frameIndex: z.number().int().min(0).max(63).default(0) },
+  async ({ frameIndex }) => ({
+    content: [{ type: "text", text: previewBase64(frameIndex) }],
+  }),
+);
+
+server.tool(
+  "get_spritesheet_png",
+  "Retorna spritesheet PNG base64.",
+  {},
+  async () => ({ content: [{ type: "text", text: spritesheetBase64() }] }),
+);
+
+server.tool(
+  "export_godot_asset",
+  "Retorna pacote JSON de metadata Godot + atlas + PNG base64.",
+  {},
+  async () => {
+    reload();
+    const asset = slug(project.godot.asset),
+      anim = slug(project.godot.animation);
     return {
       content: [
         {
           type: "text",
-          text: `Prompt aplicado. Frames: ${project.frames.length}`,
+          text: JSON.stringify(
+            {
+              asset,
+              animation: anim,
+              metadata: godotMetadata(project),
+              atlas: atlasMetadata(project),
+              spritesheet_png_base64: spritesheetBase64(),
+            },
+            null,
+            2,
+          ),
         },
       ],
     };
   },
 );
+
 server.tool(
   "apply_project_json",
-  "Substitui o projeto inteiro usando JSON gerado pela IA.",
+  "Substitui o projeto inteiro usando JSON.",
   { json: z.string() },
   async ({ json }) => {
-    project = normalizeProject(JSON.parse(json));
+    project = expandProject(JSON.parse(json));
     save();
-    return { content: [{ type: "text", text: "Projeto aplicado." }] };
+    return ok("Projeto aplicado.");
+  },
+);
+
+server.tool(
+  "get_project_json",
+  "Retorna JSON expandido do projeto.",
+  {},
+  async () => {
+    reload();
+    return { content: [{ type: "text", text: JSON.stringify(project) }] };
   },
 );
 server.tool(
-  "get_project_json",
-  "Retorna o JSON do projeto para o editor web.",
+  "get_project_compact_json",
+  "Retorna JSON compacto RLE do projeto.",
   {},
-  async () => ({
-    content: [
-      { type: "text", text: JSON.stringify(normalizeProject(project)) },
-    ],
-  }),
+  async () => {
+    reload();
+    return {
+      content: [
+        { type: "text", text: JSON.stringify(compactProject(project)) },
+      ],
+    };
+  },
 );
 server.tool(
   "get_godot_json",
   "Retorna metadata JSON compatível com Godot 4.",
   {},
-  async () => ({
-    content: [{ type: "text", text: JSON.stringify(godotMetadata(), null, 2) }],
-  }),
+  async () => {
+    reload();
+    return {
+      content: [
+        { type: "text", text: JSON.stringify(godotMetadata(project), null, 2) },
+      ],
+    };
+  },
+);
+server.tool("get_atlas_json", "Retorna atlas JSON.", {}, async () => {
+  reload();
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(atlasMetadata(project), null, 2) },
+    ],
+  };
+});
+server.tool("get_unity_json", "Retorna metadata Unity JSON.", {}, async () => {
+  reload();
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(unityMetadata(project), null, 2) },
+    ],
+  };
+});
+server.tool(
+  "quality_report",
+  "Retorna relatório de QA.",
+  { maxColors: z.number().int().min(2).max(256).default(32) },
+  async ({ maxColors }) => {
+    reload();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(qualityReport(project, maxColors), null, 2),
+        },
+      ],
+    };
+  },
 );
 
 await server.connect(new StdioServerTransport());

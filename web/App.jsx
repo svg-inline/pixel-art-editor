@@ -54,8 +54,27 @@ const blankFrame = (name = "Frame 1") => {
 function cloneProject(p) {
   return JSON.parse(JSON.stringify(p));
 }
+function expandPixels(pixels) {
+  if (Array.isArray(pixels) && pixels.length === SIZE * SIZE) return pixels;
+  if (pixels?.encoding === "rle" && Array.isArray(pixels.runs)) {
+    const out = [];
+    for (const [count, color] of pixels.runs) {
+      for (let i = 0; i < count && out.length < SIZE * SIZE; i++)
+        out.push(
+          color && /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : null,
+        );
+    }
+    while (out.length < SIZE * SIZE) out.push(null);
+    return out;
+  }
+  return new Array(SIZE * SIZE).fill(null);
+}
 function normalizeProject(input) {
-  const p = input && typeof input === "object" ? cloneProject(input) : {};
+  const source =
+    input?.format === "pixel-art-compact-v1" && input.project
+      ? input.project
+      : input;
+  const p = source && typeof source === "object" ? cloneProject(source) : {};
   p.size = Number(p.size || SIZE);
   if (!Array.isArray(p.frames) || !p.frames.length) {
     const layers =
@@ -78,8 +97,7 @@ function normalizeProject(input) {
       l.name ||= `Layer ${li + 1}`;
       l.visible = l.visible !== false;
       l.opacity = Number.isFinite(Number(l.opacity)) ? Number(l.opacity) : 1;
-      if (!Array.isArray(l.pixels) || l.pixels.length !== SIZE * SIZE)
-        l.pixels = new Array(SIZE * SIZE).fill(null);
+      l.pixels = expandPixels(l.pixels);
     });
     return {
       ...frame,
@@ -406,6 +424,7 @@ function App() {
   const [selectionStart, setSelectionStart] = useState(null);
   const [clipboard, setClipboard] = useState(null);
   const [prompt, setPrompt] = useState("crie personagem idle oeste");
+  const [aiOperation, setAiOperation] = useState("generate");
   const [bridgeStatus, setBridgeStatus] = useState("offline");
   const [gallery, setGallery] = useState([]);
   const [maxColors, setMaxColors] = useState(32);
@@ -986,14 +1005,23 @@ function App() {
       const r = await fetch(`${BRIDGE_URL}/api/ai-prompt`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt, project }),
+        body: JSON.stringify({
+          prompt,
+          operation: aiOperation,
+          project,
+          selection,
+        }),
       });
       if (!r.ok) throw new Error("bridge off");
       setProject(normalizeProject(await r.json()));
       setBridgeStatus("prompt");
       setTimeout(() => setBridgeStatus("online"), 700);
     } catch {
-      setProject(generateHeuristicProject(prompt, project));
+      setProject(
+        aiOperation === "generate"
+          ? generateHeuristicProject(prompt, project)
+          : project,
+      );
       setBridgeStatus("local-prompt");
     }
   }
@@ -1066,6 +1094,15 @@ function App() {
         <div className="status">
           Bridge: <b>{bridgeStatus}</b>
         </div>
+        <select
+          value={aiOperation}
+          onChange={(e) => setAiOperation(e.target.value)}
+        >
+          <option value="generate">gerar/substituir projeto</option>
+          <option value="edit_selection">editar seleção</option>
+          <option value="edit">editar canvas</option>
+          <option value="create_variation">criar variação</option>
+        </select>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
