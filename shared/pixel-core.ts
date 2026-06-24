@@ -264,10 +264,10 @@ export function drawRect(
   y: number,
   w: number,
   h: number,
-  color: string,
+  color: Pixel,
 ) {
-  const c = normHex(color);
-  if (!c) return;
+  const c = color === null ? null : normHex(color);
+  if (color !== null && !c) return;
   for (let yy = y; yy < y + h; yy++)
     for (let xx = x; xx < x + w; xx++) setPixel(layer, xx, yy, c);
 }
@@ -277,10 +277,10 @@ export function drawEllipse(
   y: number,
   rx: number,
   ry: number,
-  color: string,
+  color: Pixel,
 ) {
-  const c = normHex(color);
-  if (!c) return;
+  const c = color === null ? null : normHex(color);
+  if (color !== null && !c) return;
   rx = Math.max(1, Math.round(rx));
   ry = Math.max(1, Math.round(ry));
   for (let yy = -ry; yy <= ry; yy++)
@@ -289,6 +289,28 @@ export function drawEllipse(
         setPixel(layer, x + xx, y + yy, c);
     }
 }
+export function drawCircle(
+  layer: Layer,
+  x: number,
+  y: number,
+  r: number,
+  color: Pixel,
+) {
+  drawEllipse(layer, x, y, r, r, color);
+}
+export function drawEllipseOutline(
+  layer: Layer,
+  x: number,
+  y: number,
+  rx: number,
+  ry: number,
+  thickness: number,
+  color: Pixel,
+) {
+  const t = clamp(Math.round(thickness), 1, Math.max(rx, ry));
+  drawEllipse(layer, x, y, rx, ry, color);
+  if (rx > t && ry > t) drawEllipse(layer, x, y, rx - t, ry - t, null);
+}
 export function drawLine(
   layer: Layer,
   x1: number,
@@ -296,16 +318,18 @@ export function drawLine(
   x2: number,
   y2: number,
   color: string,
+  thickness = 1,
 ) {
   const c = normHex(color);
   if (!c) return;
+  const t = clamp(Math.round(thickness), 1, 32);
   let dx = Math.abs(x2 - x1),
     sx = x1 < x2 ? 1 : -1,
     dy = -Math.abs(y2 - y1),
     sy = y1 < y2 ? 1 : -1,
     err = dx + dy;
   while (true) {
-    setPixel(layer, x1, y1, c);
+    drawRect(layer, x1 - Math.floor(t / 2), y1 - Math.floor(t / 2), t, t, c);
     if (x1 === x2 && y1 === y2) break;
     const e2 = 2 * err;
     if (e2 >= dy) {
@@ -333,6 +357,95 @@ export function selectionBounds(sel?: Selection | null): Selection | null {
   const x2 = clamp(Math.max(ax, bx), 0, SIZE - 1),
     y2 = clamp(Math.max(ay, by), 0, SIZE - 1);
   return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
+}
+
+export type ObjectBounds = Selection & {
+  pixels: number;
+  cx: number;
+  cy: number;
+  coverage: number;
+  centerOffsetX: number;
+  centerOffsetY: number;
+};
+
+export function objectBounds(projectInput: any): ObjectBounds | null {
+  const project = expandProject(projectInput);
+  let minX = SIZE,
+    minY = SIZE,
+    maxX = -1,
+    maxY = -1,
+    pixels = 0;
+  for (const frame of project.frames)
+    for (const layer of frame.layers) {
+      if (!layer.visible) continue;
+      const layerPixels = expandPixels(layer.pixels);
+      for (let i = 0; i < layerPixels.length; i++) {
+        if (!layerPixels[i]) continue;
+        const x = i % SIZE,
+          y = Math.floor(i / SIZE);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+        pixels++;
+      }
+    }
+  if (!pixels) return null;
+  const w = maxX - minX + 1,
+    h = maxY - minY + 1;
+  const cx = minX + (w - 1) / 2,
+    cy = minY + (h - 1) / 2;
+  return {
+    x: minX,
+    y: minY,
+    w,
+    h,
+    pixels,
+    cx,
+    cy,
+    coverage: pixels / (SIZE * SIZE),
+    centerOffsetX: Math.round(cx - (SIZE - 1) / 2),
+    centerOffsetY: Math.round(cy - (SIZE - 1) / 2),
+  };
+}
+
+export function shiftProjectPixels(
+  projectInput: any,
+  dx: number,
+  dy: number,
+): Project {
+  const project = expandProject(projectInput);
+  const sx = clamp(Math.round(dx), -SIZE, SIZE);
+  const sy = clamp(Math.round(dy), -SIZE, SIZE);
+  if (!sx && !sy) return project;
+  for (const frame of project.frames)
+    for (const layer of frame.layers) {
+      const source = expandPixels(layer.pixels);
+      const next = new Array(PIXEL_COUNT).fill(null);
+      for (let y = 0; y < SIZE; y++)
+        for (let x = 0; x < SIZE; x++) {
+          const px = source[indexOf(x, y)];
+          if (!px) continue;
+          const tx = x + sx,
+            ty = y + sy;
+          if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE)
+            next[indexOf(tx, ty)] = px;
+        }
+      layer.pixels = next;
+    }
+  project.quality = qualityReport(project, 32);
+  return project;
+}
+
+export function centerObject(projectInput: any): Project {
+  const project = expandProject(projectInput);
+  const bounds = objectBounds(project);
+  if (!bounds) return project;
+  return shiftProjectPixels(
+    project,
+    Math.round((SIZE - 1) / 2 - bounds.cx),
+    Math.round((SIZE - 1) / 2 - bounds.cy),
+  );
 }
 
 export function colorsUsed(project: Project) {
@@ -397,6 +510,24 @@ export function qualityReport(project: Project, maxColors = 32) {
   const hasFullOpaqueLayer = project.frames.some((frame) =>
     frame.layers.some((layer) => expandPixels(layer.pixels).every(Boolean)),
   );
+  const bounds = objectBounds(project);
+  const opaquePixels = bounds?.pixels || 0;
+  const dominant = used[0] || null;
+  const dominantShare =
+    dominant && opaquePixels ? Number((dominant[1] / opaquePixels).toFixed(3)) : 0;
+  const warnings: string[] = [];
+  if (!bounds) warnings.push("empty_canvas");
+  if (used.length > maxColors) warnings.push("palette_over_limit");
+  if (countFalseCheckerboard(project)) warnings.push("false_checkerboard_pixels");
+  if (hasFullOpaqueLayer) warnings.push("opaque_background_layer");
+  if (bounds) {
+    if (bounds.w < 24 || bounds.h < 24) warnings.push("object_too_small");
+    if (bounds.w > SIZE - 16 || bounds.h > SIZE - 16)
+      warnings.push("object_too_large");
+    if (Math.abs(bounds.centerOffsetX) > 14 || Math.abs(bounds.centerOffsetY) > 14)
+      warnings.push("object_off_center");
+    if (dominantShare > 0.72) warnings.push("dominant_color_too_strong");
+  }
   return {
     colors: used.length,
     maxColors,
@@ -406,6 +537,11 @@ export function qualityReport(project: Project, maxColors = 32) {
     transparentOk: !hasFullOpaqueLayer,
     frames: project.frames.length,
     layers: project.frames.reduce((sum, frame) => sum + frame.layers.length, 0),
+    bounds,
+    dominantColor: dominant
+      ? { color: dominant[0], pixels: dominant[1], share: dominantShare }
+      : null,
+    warnings,
   };
 }
 
@@ -507,10 +643,232 @@ function paletteForPrompt(prompt: string) {
   return base;
 }
 
+type ObjectKind = "key" | "coin" | "potion" | "sword" | "chest" | "gem";
+
+function objectKindFromPrompt(prompt: string): ObjectKind | null {
+  const lower = String(prompt || "").toLowerCase();
+  if (/personagem|character|npc|her[oó]i|humano|humanoid/.test(lower))
+    return null;
+  if (/chave|key/.test(lower)) return "key";
+  if (/moeda|coin|token|medalha/.test(lower)) return "coin";
+  if (/po[cç][aã]o|potion|frasco|bottle|elixir/.test(lower)) return "potion";
+  if (/espada|sword|l[âa]mina|blade/.test(lower)) return "sword";
+  if (/ba[uú]|chest|caixa|crate/.test(lower)) return "chest";
+  if (/gema|gem|cristal|crystal|joia|jewel/.test(lower)) return "gem";
+  if (/objeto|object|item|asset|[ií]cone|icon|pickup|invent[aá]rio/.test(lower))
+    return "gem";
+  return null;
+}
+
+function objectPalette(prompt: string, kind: ObjectKind) {
+  const lower = String(prompt || "").toLowerCase();
+  if (/prata|silver|a[cç]o|steel|ferro|iron/.test(lower) || kind === "sword")
+    return {
+      outline: "#172033",
+      base: "#94a3b8",
+      mid: "#64748b",
+      dark: "#334155",
+      light: "#e2e8f0",
+      accent: "#38bdf8",
+    };
+  if (/roxo|purple|arcano|magic|m[aá]gic/.test(lower) || kind === "gem")
+    return {
+      outline: "#241038",
+      base: "#7e22ce",
+      mid: "#9333ea",
+      dark: "#4c1d95",
+      light: "#d8b4fe",
+      accent: "#22d3ee",
+    };
+  if (/verde|green|veneno|poison/.test(lower) || kind === "potion")
+    return {
+      outline: "#133022",
+      base: "#16a34a",
+      mid: "#22c55e",
+      dark: "#166534",
+      light: "#bbf7d0",
+      accent: "#38bdf8",
+    };
+  if (kind === "chest")
+    return {
+      outline: "#2a1704",
+      base: "#92400e",
+      mid: "#b45309",
+      dark: "#451a03",
+      light: "#facc15",
+      accent: "#fbbf24",
+    };
+  return {
+    outline: "#3b2607",
+    base: "#d97706",
+    mid: "#f59e0b",
+    dark: "#92400e",
+    light: "#fde68a",
+    accent: "#facc15",
+  };
+}
+
+function objectAssetName(kind: ObjectKind, prompt: string) {
+  const lower = String(prompt || "").toLowerCase();
+  const material = /prata|silver/.test(lower)
+    ? "silver"
+    : /a[cç]o|steel|ferro|iron/.test(lower)
+      ? "steel"
+      : /roxo|purple|arcano|magic|m[aá]gic/.test(lower)
+        ? "arcane"
+        : /verde|green|veneno|poison/.test(lower)
+          ? "green"
+          : /dourad|ouro|gold/.test(lower)
+            ? "golden"
+            : "";
+  return slug([material, kind].filter(Boolean).join("_"));
+}
+
+function drawDiamond(
+  layer: Layer,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  color: Pixel,
+) {
+  for (let yy = -ry; yy <= ry; yy++) {
+    const half = Math.max(0, Math.round(rx * (1 - Math.abs(yy) / ry)));
+    drawRect(layer, cx - half, cy + yy, half * 2 + 1, 1, color);
+  }
+}
+
+function drawObjectTemplate(kind: ObjectKind, layers: Layer[], prompt: string) {
+  const c = objectPalette(prompt, kind);
+  const [outline, base, shadow, light] = layers;
+  if (kind === "key") {
+    drawEllipseOutline(outline, 80, 128, 39, 38, 8, c.outline);
+    drawRect(outline, 113, 116, 87, 26, c.outline);
+    drawRect(outline, 192, 128, 24, 18, c.outline);
+    drawRect(outline, 203, 141, 16, 23, c.outline);
+    drawRect(outline, 180, 141, 24, 17, c.outline);
+
+    drawEllipseOutline(base, 80, 128, 30, 29, 13, c.mid);
+    drawRect(base, 119, 123, 78, 14, c.mid);
+    drawRect(base, 195, 131, 15, 12, c.mid);
+    drawRect(base, 205, 143, 8, 14, c.base);
+    drawRect(base, 183, 143, 15, 9, c.base);
+
+    drawRect(shadow, 73, 148, 29, 8, c.dark);
+    drawRect(shadow, 121, 135, 73, 5, c.dark);
+    drawRect(shadow, 198, 153, 12, 7, c.dark);
+    drawRect(light, 64, 101, 34, 6, c.light);
+    drawRect(light, 119, 124, 56, 4, c.light);
+    drawLine(light, 58, 133, 78, 112, c.light, 5);
+    return;
+  }
+
+  if (kind === "coin") {
+    drawEllipse(outline, 128, 128, 47, 53, c.outline);
+    drawEllipse(base, 128, 128, 38, 44, c.mid);
+    drawEllipse(shadow, 134, 138, 26, 31, c.dark);
+    drawEllipse(base, 123, 121, 30, 37, c.base);
+    drawEllipseOutline(light, 128, 128, 25, 31, 4, c.light);
+    drawRect(light, 116, 91, 24, 6, c.light);
+    return;
+  }
+
+  if (kind === "potion") {
+    drawRect(outline, 108, 68, 40, 20, c.outline);
+    drawRect(outline, 116, 86, 24, 25, c.outline);
+    drawEllipse(outline, 128, 145, 49, 52, c.outline);
+    drawRect(base, 114, 72, 28, 11, "#8b5cf6");
+    drawRect(base, 121, 88, 14, 27, c.accent);
+    drawEllipse(base, 128, 148, 39, 42, c.base);
+    drawRect(shadow, 103, 150, 50, 29, c.dark);
+    drawEllipse(light, 117, 128, 13, 18, c.light);
+    drawRect(light, 120, 92, 10, 24, c.light);
+    return;
+  }
+
+  if (kind === "sword") {
+    drawLine(outline, 78, 180, 174, 84, c.outline, 17);
+    drawLine(base, 84, 174, 169, 89, c.base, 9);
+    drawLine(light, 91, 166, 164, 93, c.light, 3);
+    drawRect(outline, 84, 169, 45, 12, c.outline);
+    drawRect(base, 91, 171, 33, 7, c.accent);
+    drawLine(outline, 71, 187, 102, 156, c.outline, 14);
+    drawLine(shadow, 76, 182, 97, 161, c.dark, 8);
+    drawEllipse(base, 70, 189, 10, 10, c.accent);
+    return;
+  }
+
+  if (kind === "chest") {
+    drawRect(outline, 72, 94, 112, 87, c.outline);
+    drawRect(outline, 84, 74, 88, 30, c.outline);
+    drawRect(base, 81, 105, 94, 66, c.base);
+    drawRect(base, 92, 84, 72, 22, c.mid);
+    drawRect(shadow, 81, 143, 94, 28, c.dark);
+    drawRect(light, 88, 91, 66, 7, c.light);
+    drawRect(outline, 123, 111, 15, 52, c.outline);
+    drawRect(base, 126, 116, 9, 42, c.accent);
+    drawRect(outline, 115, 127, 31, 25, c.outline);
+    drawRect(light, 121, 131, 19, 14, c.light);
+    return;
+  }
+
+  drawDiamond(outline, 128, 127, 47, 62, c.outline);
+  drawDiamond(base, 128, 127, 36, 50, c.mid);
+  drawDiamond(shadow, 135, 138, 24, 34, c.dark);
+  drawDiamond(light, 117, 107, 17, 22, c.light);
+  drawLine(light, 107, 130, 128, 77, c.accent, 4);
+}
+
+function generateObjectProject(
+  prompt: string,
+  baseProject: any,
+  kind: ObjectKind,
+): Project {
+  const project = expandProject(baseProject || {});
+  const frame = blankFrame(
+    kind === "key"
+      ? "Chave"
+      : kind === "coin"
+        ? "Moeda"
+        : kind === "potion"
+          ? "Pocao"
+          : kind === "sword"
+            ? "Espada"
+            : kind === "chest"
+              ? "Bau"
+              : "Gema",
+  );
+  frame.duration = 160;
+  frame.layers = [
+    blankLayer("Contorno"),
+    blankLayer("Base"),
+    blankLayer("Sombra"),
+    blankLayer("Brilho"),
+  ];
+  frame.activeLayerId = frame.layers[3].id;
+  drawObjectTemplate(kind, frame.layers, prompt);
+  project.frames = [frame];
+  project.activeFrameId = frame.id;
+  project.godot = {
+    asset: objectAssetName(kind, prompt),
+    animation: "idle",
+    direction: "S",
+    fps: 6,
+    loop: true,
+  };
+  const centered = centerObject(project);
+  centered.palette = colorsUsed(centered).map(([color]) => color);
+  centered.quality = qualityReport(centered, 16);
+  return expandProject(centered);
+}
+
 export function generatePixelArtFromPrompt(
   prompt: string,
   baseProject?: any,
 ): Project {
+  const objectKind = objectKindFromPrompt(prompt);
+  if (objectKind) return generateObjectProject(prompt, baseProject, objectKind);
+
   const spec = animationSpec(prompt);
   const project = expandProject(baseProject || {});
   project.frames = [];

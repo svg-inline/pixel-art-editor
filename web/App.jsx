@@ -274,11 +274,60 @@ function countFalseCheckerboard(project) {
   );
   return count;
 }
+function objectBounds(project) {
+  let minX = SIZE,
+    minY = SIZE,
+    maxX = -1,
+    maxY = -1,
+    pixels = 0;
+  project.frames.forEach((frame) =>
+    frame.layers.forEach((layer) => {
+      if (!layer.visible) return;
+      layer.pixels.forEach((px, i) => {
+        if (!px) return;
+        const x = i % SIZE,
+          y = Math.floor(i / SIZE);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+        pixels++;
+      });
+    }),
+  );
+  if (!pixels) return null;
+  const w = maxX - minX + 1,
+    h = maxY - minY + 1,
+    cx = minX + (w - 1) / 2,
+    cy = minY + (h - 1) / 2;
+  return {
+    x: minX,
+    y: minY,
+    w,
+    h,
+    pixels,
+    centerOffsetX: Math.round(cx - (SIZE - 1) / 2),
+    centerOffsetY: Math.round(cy - (SIZE - 1) / 2),
+  };
+}
 function qualityReport(project, maxColors = 32) {
   const used = colorsUsed(project);
   const opaqueBg = project.frames.some((frame) =>
     frame.layers.some((layer) => layer.pixels.every(Boolean)),
   );
+  const bounds = objectBounds(project);
+  const warnings = [];
+  if (!bounds) warnings.push("vazio");
+  if (used.length > maxColors) warnings.push("muitas cores");
+  if (countFalseCheckerboard(project)) warnings.push("quadriculado falso");
+  if (opaqueBg) warnings.push("fundo opaco");
+  if (bounds) {
+    if (bounds.w < 24 || bounds.h < 24) warnings.push("objeto pequeno");
+    if (bounds.w > SIZE - 16 || bounds.h > SIZE - 16)
+      warnings.push("objeto grande");
+    if (Math.abs(bounds.centerOffsetX) > 14 || Math.abs(bounds.centerOffsetY) > 14)
+      warnings.push("fora do centro");
+  }
   return {
     colors: used.length,
     overLimit: used.length > maxColors,
@@ -288,6 +337,8 @@ function qualityReport(project, maxColors = 32) {
     transparentOk: !opaqueBg,
     frames: project.frames.length,
     layers: project.frames.reduce((acc, f) => acc + f.layers.length, 0),
+    bounds,
+    warnings,
   };
 }
 function generateHeuristicProject(prompt, baseProject) {
@@ -1288,7 +1339,8 @@ function App() {
           className={
             report.overLimit ||
             report.falseCheckerboardPixels ||
-            report.hasFullOpaqueLayer
+            report.hasFullOpaqueLayer ||
+            report.warnings.length
               ? "qa warn"
               : "qa ok"
           }
@@ -1299,9 +1351,28 @@ function App() {
           <br />
           Camadas: {report.layers}
           <br />
+          {report.bounds ? (
+            <>
+              Objeto: {report.bounds.w}x{report.bounds.h}
+              <br />
+              Centro: {report.bounds.centerOffsetX}, {report.bounds.centerOffsetY}
+              <br />
+            </>
+          ) : (
+            <>
+              Objeto: vazio
+              <br />
+            </>
+          )}
           Fundo opaco: {report.hasFullOpaqueLayer ? "sim" : "não"}
           <br />
           Quadriculado falso: {report.falseCheckerboardPixels}
+          {report.warnings.length ? (
+            <>
+              <br />
+              Avisos: {report.warnings.join(", ")}
+            </>
+          ) : null}
         </div>
         <button onClick={limitColorsNow}>limitar cores agora</button>
         <label>

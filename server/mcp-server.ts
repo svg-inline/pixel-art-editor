@@ -9,10 +9,14 @@ import {
   atlasMetadata,
   blankFrame,
   blankLayer,
+  centerObject,
   clearLayer,
   compactProject,
   compositeFrameRgba,
   createVariation,
+  drawCircle,
+  drawEllipse,
+  drawEllipseOutline,
   drawLine,
   drawRect,
   editSelection,
@@ -23,6 +27,7 @@ import {
   godotMetadata,
   layerByName,
   limitColors,
+  objectBounds,
   qualityReport,
   replaceGlobalColor,
   setPixel,
@@ -202,20 +207,81 @@ server.tool(
 );
 
 server.tool(
+  "draw_ellipse",
+  "Desenha elipse preenchida.",
+  {
+    x: z.number().int().min(0).max(255),
+    y: z.number().int().min(0).max(255),
+    rx: z.number().int().min(1).max(128),
+    ry: z.number().int().min(1).max(128),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    layer: z.string().optional(),
+    frame: z.string().optional(),
+  },
+  async ({ x, y, rx, ry, color, layer, frame }) => {
+    const f = getFrame(frame);
+    drawEllipse(getLayer(f, layer), x, y, rx, ry, color);
+    save();
+    return ok("ok");
+  },
+);
+
+server.tool(
+  "draw_circle",
+  "Desenha círculo preenchido.",
+  {
+    x: z.number().int().min(0).max(255),
+    y: z.number().int().min(0).max(255),
+    r: z.number().int().min(1).max(128),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    layer: z.string().optional(),
+    frame: z.string().optional(),
+  },
+  async ({ x, y, r, color, layer, frame }) => {
+    const f = getFrame(frame);
+    drawCircle(getLayer(f, layer), x, y, r, color);
+    save();
+    return ok("ok");
+  },
+);
+
+server.tool(
+  "draw_ellipse_outline",
+  "Desenha contorno de elipse com espessura.",
+  {
+    x: z.number().int().min(0).max(255),
+    y: z.number().int().min(0).max(255),
+    rx: z.number().int().min(1).max(128),
+    ry: z.number().int().min(1).max(128),
+    thickness: z.number().int().min(1).max(64).default(4),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    layer: z.string().optional(),
+    frame: z.string().optional(),
+  },
+  async ({ x, y, rx, ry, thickness, color, layer, frame }) => {
+    const f = getFrame(frame);
+    drawEllipseOutline(getLayer(f, layer), x, y, rx, ry, thickness, color);
+    save();
+    return ok("ok");
+  },
+);
+
+server.tool(
   "draw_line",
-  "Desenha linha Bresenham.",
+  "Desenha linha Bresenham com espessura opcional.",
   {
     x1: z.number().int().min(0).max(255),
     y1: z.number().int().min(0).max(255),
     x2: z.number().int().min(0).max(255),
     y2: z.number().int().min(0).max(255),
     color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    thickness: z.number().int().min(1).max(32).default(1),
     layer: z.string().optional(),
     frame: z.string().optional(),
   },
-  async ({ x1, y1, x2, y2, color, layer, frame }) => {
+  async ({ x1, y1, x2, y2, color, thickness, layer, frame }) => {
     const f = getFrame(frame);
-    drawLine(getLayer(f, layer), x1, y1, x2, y2, color);
+    drawLine(getLayer(f, layer), x1, y1, x2, y2, color, thickness);
     save();
     return ok("ok");
   },
@@ -385,6 +451,42 @@ server.tool(
     project = limitColors(project, maxColors);
     save();
     return ok(`Paleta limitada para ${maxColors} cores.`);
+  },
+);
+
+server.tool(
+  "object_bounds",
+  "Mede a área ocupada pelos pixels visíveis do objeto.",
+  {},
+  async () => {
+    reload();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(objectBounds(project), null, 2),
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "center_object",
+  "Centraliza o objeto no canvas 256x256 preservando camadas e frames.",
+  {},
+  async () => {
+    reload();
+    project = centerObject(project);
+    save();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(objectBounds(project), null, 2),
+        },
+      ],
+    };
   },
 );
 
