@@ -28,8 +28,16 @@ const uid = () => crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
 const idx = (x, y, size = SIZE) => y * size + x;
 const isHex = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-const gridStepForZoom = (zoom) =>
-  zoom <= 1 ? 16 : zoom === 2 ? 8 : zoom === 3 ? 4 : zoom <= 5 ? 2 : 1;
+const GRID_DENSITY_TARGETS = {
+  compacta: 14,
+  normal: 26,
+  limpa: 42,
+};
+const GRID_STEPS = [1, 2, 4, 8, 16, 32, 64];
+const gridStepForZoom = (zoom, density = "normal") => {
+  const target = GRID_DENSITY_TARGETS[density] || GRID_DENSITY_TARGETS.normal;
+  return GRID_STEPS.find((step) => step * zoom >= target) || 64;
+};
 const slug = (v) =>
   String(v || "asset")
     .trim()
@@ -486,9 +494,11 @@ function App() {
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [showGrid, setShowGrid] = useState(true);
   const [gridMode, setGridMode] = useState("auto");
+  const [gridDensity, setGridDensity] = useState("normal");
   const [gridStep, setGridStep] = useState(1);
-  const [gridOpacity, setGridOpacity] = useState(14);
-  const [gridMajorStep, setGridMajorStep] = useState(16);
+  const [gridOpacity, setGridOpacity] = useState(10);
+  const [gridMajorStep, setGridMajorStep] = useState(32);
+  const [paintGridCell, setPaintGridCell] = useState(true);
   const [showOnion, setShowOnion] = useState(true);
   const [history, setHistory] = useState([]);
   const [redo, setRedo] = useState([]);
@@ -514,9 +524,9 @@ function App() {
   const effectiveGridStep = useMemo(
     () =>
       gridMode === "auto"
-        ? gridStepForZoom(zoom)
+        ? gridStepForZoom(zoom, gridDensity)
         : clamp(Number(gridStep) || 1, 1, 64),
-    [gridMode, gridStep, zoom],
+    [gridMode, gridDensity, gridStep, zoom],
   );
   const checkerSize = Math.max(8, Math.min(32, zoom * 4));
 
@@ -529,6 +539,7 @@ function App() {
     showOnion,
     selection,
     gridMode,
+    gridDensity,
     gridStep,
     gridOpacity,
     gridMajorStep,
@@ -695,13 +706,22 @@ function App() {
       const n = cloneProject(p);
       const f = activeFrameOf(n);
       const l = activeLayerOf(f);
-      if (tool === "pencil") l.pixels[idx(x, y)] = color;
-      if (tool === "eraser") l.pixels[idx(x, y)] = null;
+      const cellSize =
+        showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
+      const cellX = Math.floor(x / cellSize) * cellSize;
+      const cellY = Math.floor(y / cellSize) * cellSize;
+      const paintCell = (valueFn) => {
+        for (let yy = cellY; yy < Math.min(SIZE, cellY + cellSize); yy++)
+          for (let xx = cellX; xx < Math.min(SIZE, cellX + cellSize); xx++)
+            l.pixels[idx(xx, yy)] = valueFn(xx, yy);
+      };
+      if (tool === "pencil") paintCell(() => color);
+      if (tool === "eraser") paintCell(() => null);
       if (tool === "picker") setColor(l.pixels[idx(x, y)] || color);
       if (tool === "bucket")
         floodFillFrame(f, activeLayerIndexOf(f), x, y, color);
       if (tool === "dither")
-        l.pixels[idx(x, y)] = (x + y) % 2 === 0 ? color : null;
+        paintCell((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
       return normalizeProject(n);
     });
   }
@@ -1212,6 +1232,18 @@ function App() {
             </select>
           </label>
           <label>
+            Densidade{" "}
+            <select
+              value={gridDensity}
+              onChange={(e) => setGridDensity(e.target.value)}
+              disabled={!showGrid || gridMode !== "auto"}
+            >
+              <option value="compacta">compacta</option>
+              <option value="normal">normal</option>
+              <option value="limpa">limpa</option>
+            </select>
+          </label>
+          <label>
             Passo{" "}
             <input
               type="range"
@@ -1249,8 +1281,18 @@ function App() {
               <option value="64">64px</option>
             </select>
           </label>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={paintGridCell}
+              disabled={!showGrid}
+              onChange={(e) => setPaintGridCell(e.target.checked)}
+            />{" "}
+            pintar célula da grade
+          </label>
           <div className="status">
             Grade: {effectiveGridStep}px · tela: {effectiveGridStep * zoom}px
+            {gridMode === "auto" ? ` · ${gridDensity}` : " · manual"}
           </div>
         </div>
         <label>
