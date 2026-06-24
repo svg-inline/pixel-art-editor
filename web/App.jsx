@@ -26,6 +26,7 @@ const DEFAULT_PALETTE = [
 const DEFAULT_ANIMS = ["idle", "walk", "attack", "dodge", "skill", "death"];
 const uid = () => crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
 const idx = (x, y, size = SIZE) => y * size + x;
+const isHex = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
 const slug = (v) =>
   String(v || "asset")
     .trim()
@@ -123,6 +124,12 @@ function normalizeProject(input) {
     },
     ...(p.godot || {}),
   };
+  p.background = {
+    mode: p.background?.mode === "color" ? "color" : "transparent",
+    color: isHex(p.background?.color)
+      ? p.background.color.toLowerCase()
+      : "#0f172a",
+  };
   p.quality = p.quality || {};
   return p;
 }
@@ -184,12 +191,18 @@ function colorsUsed(project) {
   );
   return [...map.entries()].sort((a, b) => b[1] - a[1]);
 }
-function compositeFrame(frame) {
+function fillBackground(ctx, background, scale = 1) {
+  if (background?.mode !== "color") return;
+  ctx.fillStyle = isHex(background.color) ? background.color : "#0f172a";
+  ctx.fillRect(0, 0, SIZE * scale, SIZE * scale);
+}
+function compositeFrame(frame, background = { mode: "transparent" }) {
   const out = document.createElement("canvas");
   out.width = SIZE;
   out.height = SIZE;
   const ctx = out.getContext("2d");
   ctx.imageSmoothingEnabled = false;
+  fillBackground(ctx, background, 1);
   frame.layers.forEach((layer) => {
     if (!layer.visible) return;
     layer.pixels.forEach((px, i) => {
@@ -337,6 +350,7 @@ function qualityReport(project, maxColors = 32) {
     transparentOk: !opaqueBg,
     frames: project.frames.length,
     layers: project.frames.reduce((acc, f) => acc + f.layers.length, 0),
+    background: project.background,
     bounds,
     warnings,
   };
@@ -581,6 +595,7 @@ function App() {
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.imageSmoothingEnabled = false;
+    fillBackground(ctx, project.background, zoom);
     if (showOnion && frameIndex > 0)
       drawFrame(ctx, project.frames[frameIndex - 1], zoom, 0.25);
     drawFrame(ctx, frame, zoom, 1);
@@ -622,6 +637,7 @@ function App() {
     c.height = SIZE * scale;
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, c.width, c.height);
+    fillBackground(ctx, project.background, scale);
     drawFrame(ctx, project.frames[previewFrame] || project.frames[0], scale, 1);
   }
 
@@ -710,6 +726,14 @@ function App() {
   function setGodotField(k, v) {
     updateProject((p) => {
       p.godot = { ...p.godot, [k]: v };
+    }, false);
+  }
+  function setBackgroundField(k, v) {
+    updateProject((p) => {
+      p.background = {
+        ...(p.background || { mode: "transparent", color: "#0f172a" }),
+        [k]: v,
+      };
     }, false);
   }
   function addFrame() {
@@ -876,7 +900,7 @@ function App() {
   function exportPng() {
     downloadCanvas(
       `${slug(project.godot.asset)}_${slug(project.godot.animation)}_f${frameIndex + 1}.png`,
-      compositeFrame(frame),
+      compositeFrame(frame, project.background),
     );
   }
   function exportSpritesheet() {
@@ -886,7 +910,7 @@ function App() {
     const ctx = sheet.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     project.frames.forEach((f, i) =>
-      ctx.drawImage(compositeFrame(f), i * SIZE, 0),
+      ctx.drawImage(compositeFrame(f, project.background), i * SIZE, 0),
     );
     downloadCanvas(
       `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`,
@@ -930,6 +954,7 @@ function App() {
       godot_version: "4.x",
       frame_width: SIZE,
       frame_height: SIZE,
+      background: project.background,
       import: {
         filter: false,
         mipmaps: false,
@@ -966,6 +991,7 @@ function App() {
     const metadata = {
       asset,
       engine: "unity",
+      background: project.background,
       pixelsPerUnit: SIZE,
       filterMode: "Point",
       compression: "None",
@@ -1140,6 +1166,28 @@ function App() {
           />{" "}
           onion skin
         </label>
+
+        <h2>Fundo</h2>
+        <label>
+          Tipo{" "}
+          <select
+            value={project.background.mode}
+            onChange={(e) => setBackgroundField("mode", e.target.value)}
+          >
+            <option value="transparent">transparente / sem fundo</option>
+            <option value="color">cor sólida</option>
+          </select>
+        </label>
+        {project.background.mode === "color" ? (
+          <label>
+            Cor do fundo{" "}
+            <input
+              type="color"
+              value={project.background.color}
+              onChange={(e) => setBackgroundField("color", e.target.value)}
+            />
+          </label>
+        ) : null}
 
         <h2>IA / MCP</h2>
         <div className="status">
@@ -1350,6 +1398,11 @@ function App() {
           Frames: {report.frames}
           <br />
           Camadas: {report.layers}
+          <br />
+          Fundo:{" "}
+          {report.background?.mode === "color"
+            ? `cor ${report.background.color}`
+            : "transparente"}
           <br />
           {report.bounds ? (
             <>

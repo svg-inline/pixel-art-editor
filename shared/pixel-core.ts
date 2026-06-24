@@ -46,12 +46,18 @@ export type GodotMeta = {
   fps: number;
   loop: boolean;
 };
+export type BackgroundMode = "transparent" | "color";
+export type ProjectBackground = {
+  mode: BackgroundMode;
+  color: string;
+};
 export type Project = {
   size: number;
   frames: Frame[];
   activeFrameId: string;
   palette: string[];
   godot: GodotMeta;
+  background: ProjectBackground;
   quality?: Record<string, unknown>;
 };
 export type Selection = { x: number; y: number; w: number; h: number };
@@ -75,6 +81,12 @@ export const isHex = (v: any): v is string =>
   /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
 export const normHex = (v: any, fallback: Pixel = null): Pixel =>
   isHex(v) ? String(v).toLowerCase() : fallback;
+export function normalizeBackground(input: any): ProjectBackground {
+  return {
+    mode: input?.mode === "color" ? "color" : "transparent",
+    color: normHex(input?.color, "#0f172a") || "#0f172a",
+  };
+}
 export function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
@@ -211,6 +223,7 @@ export function expandProject(input: any): Project {
     fps: clamp(Math.round(Number(g.fps || 6)), 1, 60),
     loop: g.loop !== false,
   } satisfies GodotMeta;
+  p.background = normalizeBackground(p.background);
   p.quality = p.quality || {};
   return p as Project;
 }
@@ -537,6 +550,7 @@ export function qualityReport(project: Project, maxColors = 32) {
     transparentOk: !hasFullOpaqueLayer,
     frames: project.frames.length,
     layers: project.frames.reduce((sum, frame) => sum + frame.layers.length, 0),
+    background: project.background,
     bounds,
     dominantColor: dominant
       ? { color: dominant[0], pixels: dominant[1], share: dominantShare }
@@ -1059,6 +1073,7 @@ export function godotMetadata(projectInput: any) {
     godot_version: "4.x",
     frame_width: SIZE,
     frame_height: SIZE,
+    background: project.background,
     import: {
       filter: false,
       mipmaps: false,
@@ -1118,6 +1133,7 @@ export function unityMetadata(projectInput: any) {
   return {
     asset,
     engine: "unity",
+    background: project.background,
     pixelsPerUnit: SIZE,
     filterMode: "Point",
     compression: "None",
@@ -1134,8 +1150,22 @@ export function unityMetadata(projectInput: any) {
   };
 }
 
-export function compositeFrameRgba(frame: Frame) {
+export function compositeFrameRgba(
+  frame: Frame,
+  background: ProjectBackground = { mode: "transparent", color: "#0f172a" },
+) {
   const rgba = new Uint8Array(PIXEL_COUNT * 4);
+  const bg = normalizeBackground(background);
+  if (bg.mode === "color") {
+    const n = parseInt(bg.color.slice(1), 16);
+    for (let i = 0; i < PIXEL_COUNT; i++) {
+      const di = i * 4;
+      rgba[di] = (n >> 16) & 255;
+      rgba[di + 1] = (n >> 8) & 255;
+      rgba[di + 2] = n & 255;
+      rgba[di + 3] = 255;
+    }
+  }
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
     const alpha = clamp(layer.opacity, 0, 1);

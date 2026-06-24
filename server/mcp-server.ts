@@ -87,16 +87,18 @@ function previewBase64(frameIndex = 0) {
     project.frames[
       Math.max(0, Math.min(project.frames.length - 1, frameIndex))
     ] || activeFrameOf(project);
-  return encodePngRgba(SIZE, SIZE, compositeFrameRgba(frame)).toString(
-    "base64",
-  );
+  return encodePngRgba(
+    SIZE,
+    SIZE,
+    compositeFrameRgba(frame, project.background),
+  ).toString("base64");
 }
 function spritesheetBase64() {
   reload();
   const width = SIZE * project.frames.length;
   const rgba = new Uint8Array(width * SIZE * 4);
   project.frames.forEach((frame, fi) => {
-    const frameRgba = compositeFrameRgba(frame);
+    const frameRgba = compositeFrameRgba(frame, project.background);
     for (let y = 0; y < SIZE; y++)
       rgba.set(
         frameRgba.subarray(y * SIZE * 4, y * SIZE * 4 + SIZE * 4),
@@ -322,6 +324,28 @@ server.tool(
     };
     save();
     return ok("Metadados Godot atualizados.");
+  },
+);
+
+server.tool(
+  "set_background",
+  "Define o fundo do projeto sem pintar pixels: transparente ou cor sólida.",
+  {
+    mode: z.enum(["transparent", "color"]).default("transparent"),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#0f172a"),
+  },
+  async ({ mode, color }) => {
+    reload();
+    project.background = {
+      mode,
+      color: color.toLowerCase(),
+    };
+    save();
+    return ok(
+      mode === "color"
+        ? `Fundo definido como cor ${color.toLowerCase()}.`
+        : "Fundo definido como transparente.",
+    );
   },
 );
 

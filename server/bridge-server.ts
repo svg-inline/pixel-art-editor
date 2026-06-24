@@ -176,14 +176,18 @@ function renderProjectPng(project: Project, frameIndex = 0) {
     project.frames[
       Math.max(0, Math.min(project.frames.length - 1, frameIndex))
     ] || activeFrameOf(project);
-  return encodePngRgba(SIZE, SIZE, compositeFrameRgba(frame));
+  return encodePngRgba(
+    SIZE,
+    SIZE,
+    compositeFrameRgba(frame, project.background),
+  );
 }
 function renderSpritesheetPng(project: Project) {
   const width = SIZE * project.frames.length;
   const height = SIZE;
   const sheet = new Uint8Array(width * height * 4);
   project.frames.forEach((frame, fi) => {
-    const rgba = compositeFrameRgba(frame);
+    const rgba = compositeFrameRgba(frame, project.background);
     for (let y = 0; y < SIZE; y++) {
       const sourceOffset = y * SIZE * 4;
       const targetOffset = (y * width + fi * SIZE) * 4;
