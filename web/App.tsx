@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, MouseEvent as ReactMouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
   activeFrameOf,
@@ -26,7 +27,38 @@ import {
   uid,
   unityMetadata,
 } from "../shared/pixel-core.ts";
+import type {
+  Frame,
+  Layer,
+  Pixel,
+  PixelArray,
+  Project,
+  ProjectBackground,
+  Selection,
+} from "../shared/pixel-core.ts";
 import "./style.css";
+
+type Tool = "pencil" | "eraser" | "bucket" | "picker" | "select" | "dither";
+type AiOperation = "generate" | "edit_selection" | "edit" | "create_variation";
+type GridMode = "auto" | "manual";
+type GridDensity = "compacta" | "normal" | "limpa";
+type BridgeStatus =
+  | "offline"
+  | "online"
+  | "sync"
+  | "erro"
+  | "saved"
+  | "loaded"
+  | "gallery-saved"
+  | "prompt"
+  | "local-prompt";
+type Point = Pick<Selection, "x" | "y">;
+type Clip = Selection & { pixels: PixelArray };
+type GalleryItem = {
+  id: string;
+  name: string;
+  frames: number;
+};
 
 const DEFAULT_ZOOM = 3;
 const BRIDGE_URL =
@@ -39,27 +71,33 @@ const GRID_DENSITY_TARGETS = {
   limpa: 42,
 };
 const GRID_STEPS = [1, 2, 4, 8, 16, 32, 64];
-const gridStepForZoom = (zoom, density = "normal") => {
+const gridStepForZoom = (zoom: number, density: GridDensity = "normal") => {
   const target = GRID_DENSITY_TARGETS[density] || GRID_DENSITY_TARGETS.normal;
   return GRID_STEPS.find((step) => step * zoom >= target) || 64;
 };
 
-function cloneProject(p) {
+function cloneProject<T>(p: T): T {
   return clone(p);
 }
-function activeFrameIndex(project) {
+function activeFrameIndex(project: Project) {
   return Math.max(
     0,
     project.frames.findIndex((f) => f.id === project.activeFrameId),
   );
 }
-function activeLayerIndexOf(frame) {
+function activeLayerIndexOf(frame: Frame) {
   return Math.max(
     0,
     frame.layers.findIndex((l) => l.id === frame.activeLayerId),
   );
 }
-function floodFillFrame(frame, layerIndex, x, y, color) {
+function floodFillFrame(
+  frame: Frame,
+  layerIndex: number,
+  x: number,
+  y: number,
+  color: Pixel,
+) {
   const layer = frame.layers[layerIndex];
   const pixels = expandPixels(layer.pixels);
   layer.pixels = pixels;
@@ -75,50 +113,69 @@ function floodFillFrame(frame, layerIndex, x, y, color) {
     q.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
   }
 }
-function fillBackground(ctx, background, scale = 1) {
+function fillBackground(
+  ctx: CanvasRenderingContext2D,
+  background: ProjectBackground,
+  scale = 1,
+) {
   if (background?.mode !== "color") return;
   ctx.fillStyle = isHex(background.color) ? background.color : "#0f172a";
   ctx.fillRect(0, 0, SIZE * scale, SIZE * scale);
 }
-function compositeFrame(frame, background = { mode: "transparent" }) {
+function compositeFrame(
+  frame: Frame,
+  background: ProjectBackground = { mode: "transparent", color: "#0f172a" },
+) {
   const out = document.createElement("canvas");
   out.width = SIZE;
   out.height = SIZE;
   const ctx = out.getContext("2d");
+  if (!ctx) return out;
   ctx.imageSmoothingEnabled = false;
   ctx.putImageData(
-    new ImageData(new Uint8ClampedArray(compositeFrameRgba(frame, background)), SIZE, SIZE),
+    new ImageData(
+      new Uint8ClampedArray(compositeFrameRgba(frame, background)),
+      SIZE,
+      SIZE,
+    ),
     0,
     0,
   );
   return out;
 }
-function downloadText(filename, text, type = "application/json") {
+function downloadText(filename: string, text: string, type = "application/json") {
   const a = document.createElement("a");
   a.download = filename;
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-function downloadCanvas(filename, canvas) {
+function downloadCanvas(filename: string, canvas: HTMLCanvasElement) {
   const a = document.createElement("a");
   a.download = filename;
   a.href = canvas.toDataURL("image/png");
   a.click();
 }
-function readJsonFile(file) {
+function readJsonFile(file: File): Promise<unknown> {
   return file.text().then((t) => JSON.parse(t));
 }
-function getSelectionPixels(layer, sel) {
+function getSelectionPixels(layer: Layer, sel: Selection | null): Clip | null {
   const b = selectionBounds(sel);
   if (!b) return null;
-  const pixels = [];
+  const layerPixels = expandPixels(layer.pixels);
+  const pixels: PixelArray = [];
   for (let y = 0; y < b.h; y++)
     for (let x = 0; x < b.w; x++)
-      pixels.push(layer.pixels[idx(b.x + x, b.y + y)]);
+      pixels.push(layerPixels[idx(b.x + x, b.y + y)]);
   return { ...b, pixels };
 }
-function pastePixels(layer, clip, targetX, targetY, eraseSource = false) {
+function pastePixels(
+  layer: Layer,
+  clip: Clip | null,
+  targetX: number,
+  targetY: number,
+  eraseSource = false,
+) {
   if (!clip) return;
   const pixels = expandPixels(layer.pixels);
   layer.pixels = pixels;
@@ -141,35 +198,35 @@ function pastePixels(layer, clip, targetX, targetY, eraseSource = false) {
 }
 
 function App() {
-  const canvasRef = useRef(null);
-  const previewRef = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
   const lastBridgeSave = useRef(0);
-  const [project, setProject] = useState(() =>
+  const [project, setProject] = useState<Project>(() =>
     normalizeProject(
       JSON.parse(localStorage.getItem("pixel-project") || "null"),
     ),
   );
-  const [tool, setTool] = useState("pencil");
+  const [tool, setTool] = useState<Tool>("pencil");
   const [color, setColor] = useState("#111827");
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [showGrid, setShowGrid] = useState(true);
-  const [gridMode, setGridMode] = useState("auto");
-  const [gridDensity, setGridDensity] = useState("normal");
+  const [gridMode, setGridMode] = useState<GridMode>("auto");
+  const [gridDensity, setGridDensity] = useState<GridDensity>("normal");
   const [gridStep, setGridStep] = useState(1);
   const [gridOpacity, setGridOpacity] = useState(10);
   const [gridMajorStep, setGridMajorStep] = useState(32);
   const [paintGridCell, setPaintGridCell] = useState(true);
   const [showOnion, setShowOnion] = useState(true);
-  const [history, setHistory] = useState([]);
-  const [redo, setRedo] = useState([]);
-  const [selection, setSelection] = useState(null);
-  const [selectionStart, setSelectionStart] = useState(null);
-  const [clipboard, setClipboard] = useState(null);
+  const [history, setHistory] = useState<Project[]>([]);
+  const [redo, setRedo] = useState<Project[]>([]);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selectionStart, setSelectionStart] = useState<Point | null>(null);
+  const [clipboard, setClipboard] = useState<Clip | null>(null);
   const [prompt, setPrompt] = useState("crie personagem idle oeste");
-  const [aiOperation, setAiOperation] = useState("generate");
-  const [bridgeStatus, setBridgeStatus] = useState("offline");
-  const [gallery, setGallery] = useState([]);
+  const [aiOperation, setAiOperation] = useState<AiOperation>("generate");
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("offline");
+  const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [maxColors, setMaxColors] = useState(32);
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
   const [replaceTo, setReplaceTo] = useState("#000000");
@@ -222,7 +279,7 @@ function App() {
     renderPreview();
   }, [project, previewFrame]);
   useEffect(() => {
-    let es;
+    let es: EventSource | undefined;
     try {
       es = new EventSource(`${BRIDGE_URL}/api/events`);
       es.onopen = () => setBridgeStatus("online");
@@ -247,12 +304,14 @@ function App() {
     setHistory((h) => [...h.slice(-60), cloneProject(project)]);
     setRedo([]);
   }
-  function updateProject(mutator, saveHist = true) {
+  function updateProject(
+    mutator: (project: Project) => Project | void,
+    saveHist = true,
+  ) {
     if (saveHist) pushHistory();
     setProject((p) => {
       const n = cloneProject(p);
-      mutator(n);
-      return normalizeProject(n);
+      return normalizeProject(mutator(n) || n);
     });
   }
   function undo() {
@@ -268,7 +327,12 @@ function App() {
     setRedo((r) => r.slice(1));
   }
 
-  function drawFrame(ctx, frameToDraw, scale = zoom, alpha = 1) {
+  function drawFrame(
+    ctx: CanvasRenderingContext2D,
+    frameToDraw: Frame,
+    scale = zoom,
+    alpha = 1,
+  ) {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.imageSmoothingEnabled = false;
@@ -281,14 +345,14 @@ function App() {
     );
     ctx.restore();
   }
-  function drawDynamicGrid(ctx) {
+  function drawDynamicGrid(ctx: CanvasRenderingContext2D) {
     if (!showGrid) return;
     const step = clamp(Number(effectiveGridStep) || 1, 1, SIZE);
     const opacity = clamp(Number(gridOpacity) || 0, 0, 60) / 100;
     if (!opacity || step * zoom < 2) return;
     const minor = `rgba(148, 163, 184, ${opacity})`;
     const major = `rgba(226, 232, 240, ${Math.min(0.45, opacity * 1.75)})`;
-    const drawLines = (spacing, strokeStyle) => {
+    const drawLines = (spacing: number, strokeStyle: string) => {
       if (!spacing) return;
       ctx.strokeStyle = strokeStyle;
       ctx.lineWidth = 1;
@@ -315,6 +379,7 @@ function App() {
     c.width = SIZE * zoom;
     c.height = SIZE * zoom;
     const ctx = c.getContext("2d");
+    if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.imageSmoothingEnabled = false;
     fillBackground(ctx, project.background, zoom);
@@ -345,19 +410,21 @@ function App() {
     c.width = SIZE * scale;
     c.height = SIZE * scale;
     const ctx = c.getContext("2d");
+    if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
     fillBackground(ctx, project.background, scale);
     drawFrame(ctx, project.frames[previewFrame] || project.frames[0], scale, 1);
   }
 
-  function getCell(e) {
-    const r = canvasRef.current.getBoundingClientRect();
+  function getCell(e: ReactMouseEvent<HTMLCanvasElement>): Point {
+    const r = canvasRef.current?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
     return {
       x: Math.floor((e.clientX - r.left) / zoom),
       y: Math.floor((e.clientY - r.top) / zoom),
     };
   }
-  function editAt(x, y) {
+  function editAt(x: number, y: number) {
     if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
     setProject((p) => {
       const n = cloneProject(p);
@@ -382,7 +449,7 @@ function App() {
       return normalizeProject(n);
     });
   }
-  function onMouseDown(e) {
+  function onMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
     const p = getCell(e);
     if (tool === "select") {
       setSelectionStart(p);
@@ -393,7 +460,7 @@ function App() {
     drawingRef.current = true;
     editAt(p.x, p.y);
   }
-  function onMouseMove(e) {
+  function onMouseMove(e: ReactMouseEvent<HTMLCanvasElement>) {
     const p = getCell(e);
     if (tool === "select" && selectionStart) {
       setSelection({
@@ -419,7 +486,7 @@ function App() {
       f.activeLayerId = l.id;
     });
   }
-  function removeLayer(id) {
+  function removeLayer(id: string) {
     updateProject((p) => {
       const f = activeFrameOf(p);
       if (f.layers.length === 1) return;
@@ -427,7 +494,7 @@ function App() {
       f.activeLayerId = f.layers[0].id;
     });
   }
-  function moveLayer(i, dir) {
+  function moveLayer(i: number, dir: number) {
     updateProject((p) => {
       const f = activeFrameOf(p);
       const j = i + dir;
@@ -435,18 +502,21 @@ function App() {
       [f.layers[i], f.layers[j]] = [f.layers[j], f.layers[i]];
     });
   }
-  function updateLayer(i, mutator) {
+  function updateLayer(i: number, mutator: (layer: Layer) => void) {
     updateProject((p) => {
       const f = activeFrameOf(p);
       mutator(f.layers[i]);
     }, false);
   }
-  function setGodotField(k, v) {
+  function setGodotField(k: keyof Project["godot"], v: Project["godot"][keyof Project["godot"]]) {
     updateProject((p) => {
       p.godot = { ...p.godot, [k]: v };
     }, false);
   }
-  function setBackgroundField(k, v) {
+  function setBackgroundField(
+    k: keyof ProjectBackground,
+    v: ProjectBackground[keyof ProjectBackground],
+  ) {
     updateProject((p) => {
       p.background = {
         ...(p.background || { mode: "transparent", color: "#0f172a" }),
@@ -472,14 +542,14 @@ function App() {
       p.activeFrameId = f.id;
     });
   }
-  function removeFrame(id) {
+  function removeFrame(id: string) {
     updateProject((p) => {
       if (p.frames.length === 1) return;
       p.frames = p.frames.filter((f) => f.id !== id);
       p.activeFrameId = p.frames[0].id;
     });
   }
-  function moveFrame(i, dir) {
+  function moveFrame(i: number, dir: number) {
     updateProject((p) => {
       const j = i + dir;
       if (j < 0 || j >= p.frames.length) return;
@@ -507,7 +577,7 @@ function App() {
     );
     setSelection({ x: b.x, y: b.y, w: clipboard.w - 1, h: clipboard.h - 1 });
   }
-  function moveSelection(dx, dy) {
+  function moveSelection(dx: number, dy: number) {
     const clip = getSelectionPixels(activeLayerOf(frame), selection);
     if (!clip) return;
     updateProject((p) =>
@@ -526,7 +596,7 @@ function App() {
       h: clip.h - 1,
     });
   }
-  function transformSelection(kind) {
+  function transformSelection(kind: "mirrorH" | "mirrorV" | "rotate90") {
     const clip = getSelectionPixels(activeLayerOf(frame), selection);
     if (!clip) return;
     let pixels = new Array(clip.pixels.length).fill(null),
@@ -574,7 +644,7 @@ function App() {
   function limitColorsNow() {
     updateProject((p) => limitProjectColors(p, maxColors));
   }
-  function importPalette(e) {
+  function importPalette(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files[0];
     if (!f) return;
     f.text().then((text) => {
@@ -587,7 +657,7 @@ function App() {
         }, false);
     });
   }
-  function loadJson(e) {
+  function loadJson(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files[0];
     if (!f) return;
     readJsonFile(f).then((json) => {
@@ -606,6 +676,7 @@ function App() {
     sheet.width = SIZE * project.frames.length;
     sheet.height = SIZE;
     const ctx = sheet.getContext("2d");
+    if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     project.frames.forEach((f, i) =>
       ctx.drawImage(compositeFrame(f, project.background), i * SIZE, 0),
@@ -692,7 +763,7 @@ function App() {
       setBridgeStatus("offline");
     }
   }
-  async function loadGalleryItem(id) {
+  async function loadGalleryItem(id: string) {
     try {
       const r = await fetch(`${BRIDGE_URL}/api/gallery/${id}`);
       if (r.ok) {
