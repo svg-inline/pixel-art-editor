@@ -46,11 +46,17 @@ import {
   type HistoryCommandName,
 } from "../shared/history.ts";
 import { encodePngRgba } from "./png.ts";
+import {
+  defaultDbPath,
+  defaultProjectPath,
+  migrateRuntimeFiles,
+  writeInitialRuntimeFiles,
+} from "./runtime-files.ts";
 
 const projectPath = path.resolve(
-  process.env.PIXEL_PROJECT_PATH || "./pixel-project.mcp.json",
+  process.env.PIXEL_PROJECT_PATH || defaultProjectPath(),
 );
-const dbPath = path.resolve(process.env.PIXEL_DB_PATH || "./pixel-art-db.json");
+const dbPath = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
 const writeCompact = process.env.PIXEL_PROJECT_COMPACT !== "0";
 type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
 function readJson(filePath: string, fallback: any) {
@@ -87,6 +93,9 @@ function migrateDbHistory() {
   )
     writeDb(db);
 }
+migrateRuntimeFiles(projectPath, dbPath);
+writeInitialRuntimeFiles(projectPath, dbPath);
+
 let project: Project = expandProject(readJson(projectPath, {}));
 function reload() {
   project = expandProject(readJson(projectPath, project));

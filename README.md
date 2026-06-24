@@ -33,11 +33,30 @@ Use no ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
       "args": ["tsx", "server/mcp-server.ts"],
       "cwd": "/CAMINHO/DO/pixel-art-mcp",
       "env": {
-        "PIXEL_PROJECT_PATH": "./pixel-project.mcp.json"
+        "PIXEL_PROJECT_PATH": "./runtime/pixel-project.mcp.json",
+        "PIXEL_DB_PATH": "./runtime/pixel-art-db.json"
       }
     }
   }
 }
+```
+
+## Dados locais e runtime
+
+Por padrão, a bridge e o MCP gravam dados locais em `runtime/`:
+
+- `runtime/pixel-project.mcp.json`: projeto compartilhado atual.
+- `runtime/pixel-art-db.json`: galeria, usuários locais e histórico compacto.
+- `runtime/backups/`: backups criados antes de migrações ou resets.
+
+Esses arquivos são gerados em runtime e não entram no Git. Se arquivos legados existirem na raiz (`pixel-project.mcp.json` ou `pixel-art-db.json`), a bridge/MCP os migram para `runtime/` na primeira execução e criam backup antes de mover.
+
+Comandos úteis:
+
+```bash
+npm run runtime:status   # mostra caminhos e tamanhos
+npm run runtime:migrate  # migra arquivos legados e cria arquivos iniciais
+npm run runtime:reset    # faz backup e recria projeto/db vazios
 ```
 
 ## O que foi atualizado nesta versão
@@ -48,7 +67,7 @@ Use no ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
 - MCP ganhou ferramentas reais de workflow: geração, edição por seleção, variação, recolor, limite de paleta, preview PNG base64, spritesheet PNG base64 e pacote Godot.
 - Web agora lê JSON compacto, envia seleção/operação no prompt e continua com fallback local quando a bridge está offline.
 - Godot ganhou addon real em `godot/addons/pixel_art_mcp/` com dock para prompt, metadata e criação de `SpriteFrames`.
-- Dependências foram pinadas e foram adicionados `tsconfig.json` e `.gitignore` para arquivos runtime.
+- Dependências foram pinadas e foram adicionados `tsconfig.json`, `.gitignore` e `runtime/` para arquivos locais gerados.
 
 ## Ferramentas MCP principais
 

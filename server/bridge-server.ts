@@ -29,20 +29,27 @@ import {
 } from "../shared/history.ts";
 import { createAiProvider } from "./ai/provider.ts";
 import { encodePngRgba } from "./png.ts";
+import {
+  defaultDbPath,
+  defaultProjectPath,
+  migrateRuntimeFiles,
+  writeInitialRuntimeFiles,
+} from "./runtime-files.ts";
 
 const PORT = Number(process.env.PIXEL_BRIDGE_PORT || 8787);
 const HOST = process.env.PIXEL_BRIDGE_HOST || "127.0.0.1";
 const PROJECT_PATH = path.resolve(
-  process.env.PIXEL_PROJECT_PATH || "./pixel-project.mcp.json",
+  process.env.PIXEL_PROJECT_PATH || defaultProjectPath(),
 );
-const DB_PATH = path.resolve(
-  process.env.PIXEL_DB_PATH || "./pixel-art-db.json",
-);
+const DB_PATH = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
 const BODY_LIMIT = Number(
   process.env.PIXEL_BRIDGE_BODY_LIMIT || 64 * 1024 * 1024,
 );
 const TOKEN = process.env.PIXEL_BRIDGE_TOKEN || "";
 const aiProvider = createAiProvider();
+
+migrateRuntimeFiles(PROJECT_PATH, DB_PATH);
+writeInitialRuntimeFiles(PROJECT_PATH, DB_PATH);
 
 type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
 class RevisionConflictError extends Error {
