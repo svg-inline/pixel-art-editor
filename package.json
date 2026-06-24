@@ -1,0 +1,27 @@
+{
+  "name": "pixel-art-mcp",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "web": "vite --host 0.0.0.0",
+    "bridge": "tsx server/bridge-server.ts",
+    "mcp": "tsx server/mcp-server.ts",
+    "dev": "concurrently \"npm run bridge\" \"npm run web\"",
+    "dev:all": "concurrently \"npm run bridge\" \"npm run web\" \"npm run mcp\"",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "tsx": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest",
+    "concurrently": "latest"
+  },
+  "devDependencies": {}
+}
