@@ -7,6 +7,7 @@ import {
   compactProject,
   compositeFrameRgba,
   expandProject,
+  generatePixelArtFromPrompt,
   godotMetadata,
   indexOf,
   qualityReport,
@@ -99,4 +100,17 @@ test("generates common Godot and atlas metadata from normalized projects", () =>
   );
   assert.equal(atlas.meta.size.w, SIZE * 2);
   assert.equal(atlas.frames.idle_west_01.duration, 250);
+});
+
+test("prompt parser honors explicit animation and direction fields", () => {
+  const project = generatePixelArtFromPrompt(`
+    Estado/animação: Idle.
+    Direção: S — sul / frente.
+    Evitar neste contexto: magia avançada, estrada limpa e segura.
+    Regras universais: leitura clara e câmera 3/4 top-down.
+  `);
+
+  assert.equal(project.godot.animation, "idle_s");
+  assert.equal(project.godot.direction, "S");
+  assert.equal(project.godot.fps, 6);
 });

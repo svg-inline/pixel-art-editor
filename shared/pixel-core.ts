@@ -566,39 +566,75 @@ export function qualityReport(project: Project, maxColors = 32) {
 
 function animationSpec(prompt: string) {
   const lower = String(prompt || "").toLowerCase();
+  const explicitAnimation = lower.match(
+    /(?:estado\/anima[cç][aã]o|anima[cç][aã]o|estado)\s*:\s*([^\n\r.;]+)/,
+  )?.[1];
+  const explicitDirection = lower.match(
+    /dire[cç][aã]o\s*:\s*(noroeste|northwest|nw|nordeste|northeast|ne|sudoeste|southwest|sw|sudeste|southeast|se|norte|north|n\b|sul|south|s\b|oeste|west|w\b|leste|east|e\b)/,
+  )?.[1];
   const direction: Direction =
-    lower.includes("noroeste") || lower.includes("northwest")
+    /^(noroeste|northwest|nw)$/.test(explicitDirection || "")
       ? "NW"
-      : lower.includes("nordeste") || lower.includes("northeast")
+      : /^(nordeste|northeast|ne)$/.test(explicitDirection || "")
         ? "NE"
-        : lower.includes("sudoeste") || lower.includes("southwest")
+        : /^(sudoeste|southwest|sw)$/.test(explicitDirection || "")
           ? "SW"
-          : lower.includes("sudeste") || lower.includes("southeast")
+          : /^(sudeste|southeast|se)$/.test(explicitDirection || "")
             ? "SE"
-            : lower.includes("oeste") ||
-                lower.includes("west") ||
-                /\bw\b/.test(lower)
+            : /^(oeste|west|w)$/.test(explicitDirection || "")
               ? "W"
-              : lower.includes("leste") ||
-                  lower.includes("east") ||
-                  /\be\b/.test(lower)
+              : /^(leste|east|e)$/.test(explicitDirection || "")
                 ? "E"
-                : lower.includes("norte") ||
-                    lower.includes("north") ||
-                    /\bn\b/.test(lower)
+                : /^(norte|north|n)$/.test(explicitDirection || "")
                   ? "N"
-                  : "S";
-  const kind = /morrer|death|dead/.test(lower)
+                  : /^(sul|south|s)$/.test(explicitDirection || "")
+                    ? "S"
+                    : lower.includes("noroeste") || lower.includes("northwest")
+                      ? "NW"
+                      : lower.includes("nordeste") ||
+                          lower.includes("northeast")
+                        ? "NE"
+                        : lower.includes("sudoeste") ||
+                            lower.includes("southwest")
+                          ? "SW"
+                          : lower.includes("sudeste") ||
+                              lower.includes("southeast")
+                            ? "SE"
+                            : lower.includes("oeste") ||
+                                lower.includes("west")
+                              ? "W"
+                              : lower.includes("leste") ||
+                                  lower.includes("east")
+                                ? "E"
+                                : lower.includes("norte") ||
+                                    lower.includes("north")
+                                  ? "N"
+                                  : "S";
+  const kind = /morrer|death|dead/.test(explicitAnimation || "")
     ? "death"
-    : /skill|habilidade|magia|cast/.test(lower)
+    : /skill|habilidade|magia|cast/.test(explicitAnimation || "")
       ? "skill"
-      : /esquiva|dodge|dash/.test(lower)
+      : /esquiva|dodge|dash/.test(explicitAnimation || "")
         ? "dodge"
-        : /attack|ataque|golpe|hit/.test(lower)
+        : /attack|ataque|golpe|hit/.test(explicitAnimation || "")
           ? "attack"
-          : /walk|andar|movimento|move|run|correr/.test(lower)
+          : /walk|andar|movimento|move|run|correr/.test(
+                explicitAnimation || "",
+              )
             ? "walk"
-            : "idle";
+            : /idle|parado|espera/.test(explicitAnimation || "")
+              ? "idle"
+              : /morrer|death|dead/.test(lower)
+                ? "death"
+                : /skill|habilidade|cast/.test(lower)
+                  ? "skill"
+                  : /esquiva|dodge|dash/.test(lower)
+                    ? "dodge"
+                    : /attack|ataque|golpe|hit/.test(lower)
+                      ? "attack"
+                      : /walk|andar|movimento|move|run|correr/.test(lower)
+                        ? "walk"
+                        : "idle";
   const frames =
     kind === "walk"
       ? 8
