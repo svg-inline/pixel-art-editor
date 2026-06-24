@@ -27,6 +27,9 @@ const DEFAULT_ANIMS = ["idle", "walk", "attack", "dodge", "skill", "death"];
 const uid = () => crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
 const idx = (x, y, size = SIZE) => y * size + x;
 const isHex = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const gridStepForZoom = (zoom) =>
+  zoom <= 1 ? 16 : zoom === 2 ? 8 : zoom === 3 ? 4 : zoom <= 5 ? 2 : 1;
 const slug = (v) =>
   String(v || "asset")
     .trim()
@@ -482,6 +485,10 @@ function App() {
   const [color, setColor] = useState("#111827");
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [showGrid, setShowGrid] = useState(true);
+  const [gridMode, setGridMode] = useState("auto");
+  const [gridStep, setGridStep] = useState(1);
+  const [gridOpacity, setGridOpacity] = useState(14);
+  const [gridMajorStep, setGridMajorStep] = useState(16);
   const [showOnion, setShowOnion] = useState(true);
   const [history, setHistory] = useState([]);
   const [redo, setRedo] = useState([]);
@@ -504,10 +511,29 @@ function App() {
     [project, maxColors],
   );
   const usedColors = useMemo(() => colorsUsed(project), [project]);
+  const effectiveGridStep = useMemo(
+    () =>
+      gridMode === "auto"
+        ? gridStepForZoom(zoom)
+        : clamp(Number(gridStep) || 1, 1, 64),
+    [gridMode, gridStep, zoom],
+  );
+  const checkerSize = Math.max(8, Math.min(32, zoom * 4));
 
   useEffect(() => {
     renderCanvas();
-  }, [project, zoom, showGrid, showOnion, selection]);
+  }, [
+    project,
+    zoom,
+    showGrid,
+    showOnion,
+    selection,
+    gridMode,
+    gridStep,
+    gridOpacity,
+    gridMajorStep,
+    effectiveGridStep,
+  ]);
   useEffect(() => {
     localStorage.setItem("pixel-project", JSON.stringify(project));
   }, [project]);
@@ -587,6 +613,34 @@ function App() {
     }
     ctx.restore();
   }
+  function drawDynamicGrid(ctx) {
+    if (!showGrid) return;
+    const step = clamp(Number(effectiveGridStep) || 1, 1, SIZE);
+    const opacity = clamp(Number(gridOpacity) || 0, 0, 60) / 100;
+    if (!opacity || step * zoom < 2) return;
+    const minor = `rgba(148, 163, 184, ${opacity})`;
+    const major = `rgba(226, 232, 240, ${Math.min(0.45, opacity * 1.75)})`;
+    const drawLines = (spacing, strokeStyle) => {
+      if (!spacing) return;
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= SIZE; i += spacing) {
+        const p = i * zoom + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(p, 0);
+        ctx.lineTo(p, SIZE * zoom);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, p);
+        ctx.lineTo(SIZE * zoom, p);
+        ctx.stroke();
+      }
+    };
+    ctx.save();
+    drawLines(step, minor);
+    if (gridMajorStep > step) drawLines(gridMajorStep, major);
+    ctx.restore();
+  }
   function renderCanvas() {
     const c = canvasRef.current;
     if (!c) return;
@@ -599,6 +653,7 @@ function App() {
     if (showOnion && frameIndex > 0)
       drawFrame(ctx, project.frames[frameIndex - 1], zoom, 0.25);
     drawFrame(ctx, frame, zoom, 1);
+    drawDynamicGrid(ctx);
     if (selection) {
       const b = selectionBounds(selection);
       if (b) {
@@ -612,20 +667,6 @@ function App() {
           b.h * zoom,
         );
         ctx.setLineDash([]);
-      }
-    }
-    if (showGrid && zoom >= 3) {
-      ctx.strokeStyle = "rgba(0,0,0,.08)";
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= SIZE; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * zoom, 0);
-        ctx.lineTo(i * zoom, SIZE * zoom);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, i * zoom);
-        ctx.lineTo(SIZE * zoom, i * zoom);
-        ctx.stroke();
       }
     }
   }
@@ -1150,7 +1191,7 @@ function App() {
           />{" "}
           {zoom}x
         </label>
-        <label>
+        <label className="inline-check">
           <input
             type="checkbox"
             checked={showGrid}
@@ -1158,6 +1199,60 @@ function App() {
           />{" "}
           grade
         </label>
+        <div className="grid-settings">
+          <label>
+            Modo da grade{" "}
+            <select
+              value={gridMode}
+              onChange={(e) => setGridMode(e.target.value)}
+              disabled={!showGrid}
+            >
+              <option value="auto">automático</option>
+              <option value="manual">manual</option>
+            </select>
+          </label>
+          <label>
+            Passo{" "}
+            <input
+              type="range"
+              min="1"
+              max="32"
+              value={gridMode === "auto" ? effectiveGridStep : gridStep}
+              disabled={!showGrid || gridMode === "auto"}
+              onChange={(e) => setGridStep(+e.target.value)}
+            />{" "}
+            {effectiveGridStep}px
+          </label>
+          <label>
+            Opacidade{" "}
+            <input
+              type="range"
+              min="0"
+              max="45"
+              value={gridOpacity}
+              disabled={!showGrid}
+              onChange={(e) => setGridOpacity(+e.target.value)}
+            />{" "}
+            {gridOpacity}%
+          </label>
+          <label>
+            Linha forte{" "}
+            <select
+              value={gridMajorStep}
+              disabled={!showGrid}
+              onChange={(e) => setGridMajorStep(+e.target.value)}
+            >
+              <option value="0">desligada</option>
+              <option value="8">8px</option>
+              <option value="16">16px</option>
+              <option value="32">32px</option>
+              <option value="64">64px</option>
+            </select>
+          </label>
+          <div className="status">
+            Grade: {effectiveGridStep}px · tela: {effectiveGridStep * zoom}px
+          </div>
+        </div>
         <label>
           <input
             type="checkbox"
@@ -1291,6 +1386,7 @@ function App() {
       <section className="stage">
         <canvas
           ref={canvasRef}
+          style={{ "--checker-size": `${checkerSize}px` }}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
