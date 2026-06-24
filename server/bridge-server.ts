@@ -39,6 +39,19 @@ const TOKEN = process.env.PIXEL_BRIDGE_TOKEN || "";
 const aiProvider = createAiProvider();
 
 type Db = { users: any[]; gallery: any[]; history: any[] };
+class RevisionConflictError extends Error {
+  status = 409;
+  current: Project;
+
+  constructor(expected: number, current: Project) {
+    super(`revision_conflict_expected_${expected}_current_${current.revision}`);
+    this.current = current;
+  }
+}
+type WriteProjectOptions = {
+  addHistory?: boolean;
+  expectedRevision?: number | null;
+};
 const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 let writeQueue = Promise.resolve();
 let lastMtime = 0;
@@ -72,9 +85,28 @@ function readDb(): Db {
 function writeDb(db: Db) {
   atomicWrite(DB_PATH, JSON.stringify(db, null, 2));
 }
-async function writeProject(projectInput: any, addHistory = true) {
-  const project = expandProject(projectInput);
-  writeQueue = writeQueue.then(() => {
+function expectedRevisionFrom(data: any): number | null {
+  const value = data?.revision ?? data?.project?.revision;
+  const revision = Number(value);
+  return Number.isFinite(revision) ? Math.max(0, Math.floor(revision)) : null;
+}
+async function writeProject(
+  projectInput: any,
+  options: WriteProjectOptions = {},
+) {
+  const addHistory = options.addHistory !== false;
+  let savedProject: Project | null = null;
+  const writeTask = writeQueue.then(() => {
+    const current = readProject();
+    if (
+      options.expectedRevision !== null &&
+      options.expectedRevision !== undefined &&
+      current.revision !== options.expectedRevision
+    ) {
+      throw new RevisionConflictError(options.expectedRevision, current);
+    }
+    const project = expandProject(projectInput);
+    project.revision = current.revision + 1;
     atomicWrite(PROJECT_PATH, JSON.stringify(compactProject(project), null, 2));
     if (addHistory) {
       const db = readDb();
@@ -90,9 +122,14 @@ async function writeProject(projectInput: any, addHistory = true) {
       ? fs.statSync(PROJECT_PATH).mtimeMs
       : lastMtime;
     broadcastProject(project);
+    savedProject = project;
   });
-  await writeQueue;
-  return project;
+  writeQueue = writeTask.then(
+    () => undefined,
+    () => undefined,
+  );
+  await writeTask;
+  return savedProject as Project;
 }
 function sendEvent(res: http.ServerResponse, event: string, data: any) {
   res.write(`event: ${event}\n`);
@@ -235,8 +272,19 @@ const server = http.createServer(async (req, res) => {
       return json(req, res, 200, readProject());
     if (url.pathname === "/api/project.compact" && req.method === "GET")
       return json(req, res, 200, compactProject(readProject()));
-    if (url.pathname === "/api/project" && req.method === "POST")
-      return json(req, res, 200, await writeProject(await body(req)));
+    if (url.pathname === "/api/project" && req.method === "POST") {
+      const data = await body(req);
+      const projectInput = data?.project || data;
+      return json(
+        req,
+        res,
+        200,
+        await writeProject(projectInput, {
+          addHistory: data?.addHistory !== false && data?.source !== "autosave",
+          expectedRevision: expectedRevisionFrom(data),
+        }),
+      );
+    }
 
     if (url.pathname === "/api/ai-prompt" && req.method === "POST") {
       const data = await body(req);
@@ -250,7 +298,14 @@ const server = http.createServer(async (req, res) => {
         to: data.to,
         maxColors: data.maxColors,
       });
-      return json(req, res, 200, await writeProject(project));
+      return json(
+        req,
+        res,
+        200,
+        await writeProject(project, {
+          expectedRevision: expectedRevisionFrom(data),
+        }),
+      );
     }
     if (url.pathname === "/api/tools/edit-selection" && req.method === "POST") {
       const data = await body(req);
@@ -265,6 +320,7 @@ const server = http.createServer(async (req, res) => {
             data.selection || null,
             data.layer,
           ),
+          { expectedRevision: expectedRevisionFrom(data) },
         ),
       );
     }
@@ -283,6 +339,7 @@ const server = http.createServer(async (req, res) => {
             data.from,
             data.to,
           ),
+          { expectedRevision: expectedRevisionFrom(data) },
         ),
       );
     }
@@ -297,6 +354,7 @@ const server = http.createServer(async (req, res) => {
             expandProject(data.project || readProject()),
             Number(data.maxColors || 32),
           ),
+          { expectedRevision: expectedRevisionFrom(data) },
         ),
       );
     }
@@ -314,6 +372,7 @@ const server = http.createServer(async (req, res) => {
             data.project || readProject(),
             data.variant || data.prompt || "mirror_h",
           ),
+          { expectedRevision: expectedRevisionFrom(data) },
         ),
       );
     }
@@ -331,6 +390,7 @@ const server = http.createServer(async (req, res) => {
             data.project || readProject(),
             Number(data.totalFrames || 8),
           ),
+          { expectedRevision: expectedRevisionFrom(data) },
         ),
       );
     }
@@ -444,6 +504,12 @@ const server = http.createServer(async (req, res) => {
     }
     return json(req, res, 404, { error: "not_found" });
   } catch (e: any) {
+    if (e instanceof RevisionConflictError)
+      return json(req, res, 409, {
+        error: "revision_conflict",
+        current: e.current,
+        revision: e.current.revision,
+      });
     return json(req, res, 500, { error: e?.message || "server_error" });
   }
 });

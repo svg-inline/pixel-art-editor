@@ -53,6 +53,7 @@ export type ProjectBackground = {
 };
 export type Project = {
   size: number;
+  revision: number;
   frames: Frame[];
   activeFrameId: string;
   palette: string[];
@@ -158,6 +159,10 @@ export function expandProject(input: any): Project {
       : input;
   const p: any = raw && typeof raw === "object" ? clone(raw) : {};
   p.size = SIZE;
+  p.revision = Math.max(
+    0,
+    Math.floor(Number.isFinite(Number(p.revision)) ? Number(p.revision) : 0),
+  );
   if (!Array.isArray(p.frames) || !p.frames.length) {
     const layers =
       Array.isArray(p.layers) && p.layers.length

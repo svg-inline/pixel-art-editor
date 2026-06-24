@@ -51,7 +51,15 @@ type BridgeStatus =
   | "loaded"
   | "gallery-saved"
   | "prompt"
-  | "local-prompt";
+  | "local-prompt"
+  | "conflict";
+type AutosaveStatus =
+  | "idle"
+  | "dirty"
+  | "saving"
+  | "saved"
+  | "error"
+  | "conflict";
 type Point = Pick<Selection, "x" | "y">;
 type Clip = Selection & { pixels: PixelArray };
 type GalleryItem = {
@@ -61,6 +69,7 @@ type GalleryItem = {
 };
 
 const DEFAULT_ZOOM = 3;
+const AUTOSAVE_DEBOUNCE_MS = 900;
 const BRIDGE_URL =
   import.meta.env.VITE_PIXEL_BRIDGE_URL || "http://localhost:8787";
 const DEFAULT_ANIMS = ["idle", "walk", "attack", "dodge", "skill", "death"];
@@ -207,6 +216,10 @@ function App() {
       JSON.parse(localStorage.getItem("pixel-project") || "null"),
     ),
   );
+  const projectRef = useRef<Project>(project);
+  const dirtyRef = useRef(false);
+  const lastSavedSnapshotRef = useRef<string | null>(null);
+  const pendingSaveRevisionRef = useRef<number | null>(null);
   const [tool, setTool] = useState<Tool>("pencil");
   const [color, setColor] = useState("#111827");
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
@@ -226,6 +239,9 @@ function App() {
   const [prompt, setPrompt] = useState("crie personagem idle oeste");
   const [aiOperation, setAiOperation] = useState<AiOperation>("generate");
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("offline");
+  const [autosaveStatus, setAutosaveStatus] =
+    useState<AutosaveStatus>("idle");
+  const [dirty, setDirty] = useState(false);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [maxColors, setMaxColors] = useState(32);
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
@@ -247,7 +263,21 @@ function App() {
     [gridMode, gridDensity, gridStep, zoom],
   );
   const checkerSize = Math.max(8, Math.min(32, zoom * 4));
+  const autosaveLabel = {
+    idle: "aguardando",
+    dirty: "pendente",
+    saving: "salvando",
+    saved: "salvo",
+    error: "erro",
+    conflict: "conflito",
+  }[autosaveStatus];
 
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
   useEffect(() => {
     renderCanvas();
   }, [
@@ -266,6 +296,22 @@ function App() {
   useEffect(() => {
     localStorage.setItem("pixel-project", JSON.stringify(project));
   }, [project]);
+  useEffect(() => {
+    const snapshot = JSON.stringify(project);
+    if (lastSavedSnapshotRef.current === null)
+      lastSavedSnapshotRef.current = snapshot;
+    if (!dirty) return;
+    if (snapshot === lastSavedSnapshotRef.current) {
+      setDirty(false);
+      setAutosaveStatus("saved");
+      return;
+    }
+    setAutosaveStatus("dirty");
+    const timeout = setTimeout(() => {
+      void autosaveProject(project, snapshot);
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timeout);
+  }, [project, dirty]);
   useEffect(() => {
     const ms = Math.max(30, 1000 / Number(project.godot?.fps || 6));
     const t = setInterval(
@@ -287,7 +333,17 @@ function App() {
       es.addEventListener("project", (e) => {
         try {
           const data = normalizeProject(JSON.parse(e.data));
-          setProject(data);
+          const localRevision = projectRef.current.revision;
+          if (dirtyRef.current) {
+            const ownPendingSave =
+              pendingSaveRevisionRef.current === localRevision;
+            if (data.revision > localRevision && !ownPendingSave) {
+              setAutosaveStatus("conflict");
+              setBridgeStatus("conflict");
+            }
+            return;
+          }
+          acceptSavedProject(data, "saved");
           setBridgeStatus("sync");
           setTimeout(() => setBridgeStatus("online"), 700);
         } catch {
@@ -304,11 +360,71 @@ function App() {
     setHistory((h) => [...h.slice(-60), cloneProject(project)]);
     setRedo([]);
   }
+  function markDirty() {
+    setDirty(true);
+    setAutosaveStatus("dirty");
+  }
+  function acceptSavedProject(
+    input: unknown,
+    status: AutosaveStatus = "saved",
+  ) {
+    const next = normalizeProject(input);
+    lastSavedSnapshotRef.current = JSON.stringify(next);
+    pendingSaveRevisionRef.current = null;
+    setDirty(false);
+    setAutosaveStatus(status);
+    setProject(next);
+    return next;
+  }
+  async function autosaveProject(projectToSave: Project, snapshot: string) {
+    const expectedRevision = projectToSave.revision;
+    pendingSaveRevisionRef.current = expectedRevision;
+    setAutosaveStatus("saving");
+    try {
+      const r = await fetch(`${BRIDGE_URL}/api/project`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          project: projectToSave,
+          revision: expectedRevision,
+          source: "autosave",
+          addHistory: false,
+        }),
+      });
+      if (r.status === 409) {
+        pendingSaveRevisionRef.current = null;
+        setAutosaveStatus("conflict");
+        setBridgeStatus("conflict");
+        return;
+      }
+      if (!r.ok) throw new Error("autosave_failed");
+      const saved = normalizeProject(await r.json());
+      const currentSnapshot = JSON.stringify(projectRef.current);
+      lastBridgeSave.current = Date.now();
+      pendingSaveRevisionRef.current = null;
+      if (currentSnapshot !== snapshot) {
+        lastSavedSnapshotRef.current = JSON.stringify(saved);
+        setProject((current) =>
+          normalizeProject({ ...current, revision: saved.revision }),
+        );
+        setAutosaveStatus("dirty");
+        return;
+      }
+      acceptSavedProject(saved);
+      setBridgeStatus("saved");
+      setTimeout(() => setBridgeStatus("online"), 700);
+    } catch {
+      pendingSaveRevisionRef.current = null;
+      setAutosaveStatus("error");
+      setBridgeStatus("offline");
+    }
+  }
   function updateProject(
     mutator: (project: Project) => Project | void,
     saveHist = true,
   ) {
     if (saveHist) pushHistory();
+    markDirty();
     setProject((p) => {
       const n = cloneProject(p);
       return normalizeProject(mutator(n) || n);
@@ -316,12 +432,14 @@ function App() {
   }
   function undo() {
     if (!history.length) return;
+    markDirty();
     setRedo((r) => [cloneProject(project), ...r]);
     setProject(history[history.length - 1]);
     setHistory((h) => h.slice(0, -1));
   }
   function redoAction() {
     if (!redo.length) return;
+    markDirty();
     setHistory((h) => [...h, cloneProject(project)]);
     setProject(redo[0]);
     setRedo((r) => r.slice(1));
@@ -426,6 +544,7 @@ function App() {
   }
   function editAt(x: number, y: number) {
     if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
+    markDirty();
     setProject((p) => {
       const n = cloneProject(p);
       const f = activeFrameOf(n);
@@ -662,6 +781,7 @@ function App() {
     if (!f) return;
     readJsonFile(f).then((json) => {
       pushHistory();
+      markDirty();
       setProject(normalizeProject(json));
     });
   }
@@ -714,11 +834,22 @@ function App() {
   }
   async function saveBackend() {
     try {
-      await fetch(`${BRIDGE_URL}/api/project`, {
+      const r = await fetch(`${BRIDGE_URL}/api/project`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(project),
+        body: JSON.stringify({
+          project,
+          revision: project.revision,
+          addHistory: true,
+        }),
       });
+      if (r.status === 409) {
+        setAutosaveStatus("conflict");
+        setBridgeStatus("conflict");
+        return;
+      }
+      if (!r.ok) throw new Error("save_failed");
+      acceptSavedProject(await r.json());
       lastBridgeSave.current = Date.now();
       setBridgeStatus("saved");
       setTimeout(() => setBridgeStatus("online"), 700);
@@ -731,7 +862,7 @@ function App() {
       const r = await fetch(`${BRIDGE_URL}/api/project`);
       if (r.ok) {
         pushHistory();
-        setProject(normalizeProject(await r.json()));
+        acceptSavedProject(await r.json());
         setBridgeStatus("loaded");
         setTimeout(() => setBridgeStatus("online"), 700);
       }
@@ -768,7 +899,7 @@ function App() {
       const r = await fetch(`${BRIDGE_URL}/api/gallery/${id}`);
       if (r.ok) {
         pushHistory();
-        setProject(normalizeProject(await r.json()));
+        acceptSavedProject(await r.json());
       }
     } catch {
       setBridgeStatus("offline");
@@ -784,14 +915,21 @@ function App() {
           prompt,
           operation: aiOperation,
           project,
+          revision: project.revision,
           selection,
         }),
       });
+      if (r.status === 409) {
+        setAutosaveStatus("conflict");
+        setBridgeStatus("conflict");
+        return;
+      }
       if (!r.ok) throw new Error("bridge off");
-      setProject(normalizeProject(await r.json()));
+      acceptSavedProject(await r.json());
       setBridgeStatus("prompt");
       setTimeout(() => setBridgeStatus("online"), 700);
     } catch {
+      markDirty();
       setProject(
         aiOperation === "generate"
           ? generatePixelArtFromPrompt(prompt, project)
@@ -966,6 +1104,9 @@ function App() {
         <h2>IA / MCP</h2>
         <div className="status">
           Bridge: <b>{bridgeStatus}</b>
+          <br />
+          Autosave: <b>{autosaveLabel}</b>
+          {dirty ? " · alterações pendentes" : ""}
         </div>
         <select
           value={aiOperation}
@@ -1086,7 +1227,9 @@ function App() {
                 "frame " + (fr.id === project.activeFrameId ? "active" : "")
               }
               onClick={() =>
-                setProject((p) => ({ ...p, activeFrameId: fr.id }))
+                updateProject((p) => {
+                  p.activeFrameId = fr.id;
+                }, false)
               }
             >
               <span>{i + 1}</span>

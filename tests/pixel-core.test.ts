@@ -29,11 +29,13 @@ test("normalizes legacy layer projects and compact RLE pixels", () => {
       },
     ],
     godot: { direction: "bad", fps: 999 },
+    revision: "3",
   });
 
   const project = expandProject(compact);
 
   assert.equal(project.size, SIZE);
+  assert.equal(project.revision, 3);
   assert.equal(project.frames.length, 1);
   assert.equal(project.frames[0].layers.length, 1);
   assert.equal(project.frames[0].layers[0].pixels[indexOf(0, 0)], "#abcdef");

@@ -61,7 +61,9 @@ function reload() {
   return project;
 }
 function save() {
+  const current = expandProject(readJson(projectPath, {}));
   project = expandProject(project);
+  project.revision = Math.max(current.revision, project.revision) + 1;
   atomicWrite(
     projectPath,
     JSON.stringify(writeCompact ? compactProject(project) : project, null, 2),
