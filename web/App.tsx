@@ -12,6 +12,7 @@ import {
   clamp,
   clone,
   colorsUsed,
+  compactProject,
   DIRECTIONS,
   expandPixels,
   generatePixelArtFromPrompt,
@@ -89,6 +90,7 @@ const AUTOSAVE_DEBOUNCE_MS = 900;
 const BRIDGE_URL =
   import.meta.env.VITE_PIXEL_BRIDGE_URL || "http://localhost:8787";
 const BRIDGE_TOKEN = import.meta.env.VITE_PIXEL_BRIDGE_TOKEN || "";
+const LOCAL_PROJECT_KEY = "pixel-project";
 const DEFAULT_ANIMS = ["idle", "walk", "attack", "dodge", "skill", "death"];
 const idx = indexOf;
 const GRID_DENSITY_TARGETS = {
@@ -116,6 +118,32 @@ function bridgeFetch(path: string, init: RequestInit = {}) {
     ...init,
     headers: bridgeHeaders(init.headers),
   });
+}
+function loadLocalProjectSnapshot() {
+  try {
+    const raw = localStorage.getItem(LOCAL_PROJECT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    try {
+      localStorage.removeItem(LOCAL_PROJECT_KEY);
+    } catch {}
+    return null;
+  }
+}
+function saveLocalProjectSnapshot(project: Project) {
+  try {
+    localStorage.setItem(
+      LOCAL_PROJECT_KEY,
+      JSON.stringify(compactProject(project)),
+    );
+    return true;
+  } catch (error) {
+    try {
+      localStorage.removeItem(LOCAL_PROJECT_KEY);
+    } catch {}
+    console.warn("Projeto grande demais para localStorage; usando bridge/runtime.", error);
+    return false;
+  }
 }
 
 function cloneProject<T>(p: T): T {
@@ -242,9 +270,7 @@ function App() {
   const lastBridgeSave = useRef(0);
   const lastRenderStatsUpdateRef = useRef(0);
   const [project, setProject] = useState<Project>(() =>
-    normalizeProject(
-      JSON.parse(localStorage.getItem("pixel-project") || "null"),
-    ),
+    normalizeProject(loadLocalProjectSnapshot()),
   );
   const projectRef = useRef<Project>(project);
   const dirtyRef = useRef(false);
@@ -327,7 +353,8 @@ function App() {
     effectiveGridStep,
   ]);
   useEffect(() => {
-    localStorage.setItem("pixel-project", JSON.stringify(project));
+    const timeout = setTimeout(() => saveLocalProjectSnapshot(project), 600);
+    return () => clearTimeout(timeout);
   }, [project]);
   useEffect(() => {
     const snapshot = JSON.stringify(project);
