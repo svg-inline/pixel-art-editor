@@ -11,3 +11,4 @@ pixel-project.mcp.json
 pixel-art-db.json
 *.tmp
 .DS_Store
+**/*.zip
