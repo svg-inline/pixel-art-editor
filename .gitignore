@@ -4,6 +4,9 @@ dist/
 runtime/*
 !runtime/.gitkeep
 !runtime/README.md
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 pixel-project.mcp.json
 pixel-art-db.json
 *.tmp

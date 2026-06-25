@@ -8,6 +8,7 @@ export const RUNTIME_DIR = path.resolve(
 );
 export const PROJECT_FILE = "pixel-project.mcp.json";
 export const DB_FILE = "pixel-art-db.json";
+export const SQLITE_FILE = "editor.sqlite";
 
 type RuntimeFile = {
   name: string;
@@ -25,6 +26,10 @@ export function defaultProjectPath() {
 
 export function defaultDbPath() {
   return runtimePath(DB_FILE);
+}
+
+export function defaultSqlitePath() {
+  return runtimePath(SQLITE_FILE);
 }
 
 function ensureDir(filePath: string) {

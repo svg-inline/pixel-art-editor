@@ -26,10 +26,6 @@ import {
   type Project,
 } from "../shared/pixel-core.ts";
 import {
-  createProjectCommand,
-  HISTORY_LIMIT,
-  isHistoryCommand,
-  type HistoryCommand,
   type HistoryCommandName,
 } from "../shared/history.ts";
 import {
@@ -42,9 +38,10 @@ import { encodePngRgba } from "./png.ts";
 import {
   defaultDbPath,
   defaultProjectPath,
+  defaultSqlitePath,
   migrateRuntimeFiles,
-  writeInitialRuntimeFiles,
 } from "./runtime-files.ts";
+import { ProjectRepository } from "./db.ts";
 import {
   assertBridgeSecurity,
   bridgeSecurityConfig,
@@ -61,7 +58,12 @@ const HOST = process.env.PIXEL_BRIDGE_HOST || "127.0.0.1";
 const PROJECT_PATH = path.resolve(
   process.env.PIXEL_PROJECT_PATH || defaultProjectPath(),
 );
-const DB_PATH = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
+const LEGACY_DB_PATH = path.resolve(
+  process.env.PIXEL_DB_PATH || defaultDbPath(),
+);
+const SQLITE_PATH = path.resolve(
+  process.env.PIXEL_SQLITE_PATH || defaultSqlitePath(),
+);
 const BODY_LIMIT = Number(
   process.env.PIXEL_BRIDGE_BODY_LIMIT || 64 * 1024 * 1024,
 );
@@ -69,10 +71,12 @@ const SECURITY = bridgeSecurityConfig();
 const aiProvider = createAiProvider();
 
 assertBridgeSecurity(SECURITY);
-migrateRuntimeFiles(PROJECT_PATH, DB_PATH);
-writeInitialRuntimeFiles(PROJECT_PATH, DB_PATH);
+migrateRuntimeFiles(PROJECT_PATH, LEGACY_DB_PATH);
+const repository = new ProjectRepository(SQLITE_PATH, {
+  legacyProjectPath: PROJECT_PATH,
+  legacyDbPath: LEGACY_DB_PATH,
+});
 
-type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
 class RevisionConflictError extends Error {
   status = 409;
   current: Project;
@@ -189,50 +193,8 @@ let lastMtime = 0;
 const clients = new Set<http.ServerResponse>();
 const aiPreviews = new Map<string, AiPreview>();
 
-function ensureDir(filePath: string) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-}
-function atomicWrite(filePath: string, data: string | Buffer) {
-  ensureDir(filePath);
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, filePath);
-}
-function readJsonFile(filePath: string, fallback: any) {
-  if (!fs.existsSync(filePath)) return fallback;
-  const text = fs.readFileSync(filePath, "utf8");
-  return text.trim() ? JSON.parse(text) : fallback;
-}
 function readProject(): Project {
-  if (!fs.existsSync(PROJECT_PATH)) {
-    const project = expandProject({});
-    atomicWrite(PROJECT_PATH, JSON.stringify(compactProject(project), null, 2));
-    return project;
-  }
-  return expandProject(readJsonFile(PROJECT_PATH, {}));
-}
-function readDb(): Db {
-  const db = readJsonFile(DB_PATH, { users: [], gallery: [], history: [] });
-  return {
-    users: Array.isArray(db.users) ? db.users : [],
-    gallery: Array.isArray(db.gallery) ? db.gallery : [],
-    history: Array.isArray(db.history)
-      ? db.history.filter(isHistoryCommand).slice(0, HISTORY_LIMIT)
-      : [],
-  };
-}
-function writeDb(db: Db) {
-  atomicWrite(DB_PATH, JSON.stringify(db, null, 2));
-}
-function migrateDbHistory() {
-  const raw = readJsonFile(DB_PATH, { users: [], gallery: [], history: [] });
-  const db = readDb();
-  if (
-    !Array.isArray(raw.history) ||
-    raw.history.length !== db.history.length ||
-    raw.history.some((entry: any) => !isHistoryCommand(entry))
-  )
-    writeDb(db);
+  return repository.getProject();
 }
 function expectedRevisionFrom(data: any): number | null {
   const value = data?.revision ?? data?.project?.revision;
@@ -255,28 +217,16 @@ async function writeProject(
       throw new RevisionConflictError(options.expectedRevision, current);
     }
     const project = expandProject(projectInput);
-    project.revision = current.revision + 1;
-    atomicWrite(PROJECT_PATH, JSON.stringify(compactProject(project), null, 2));
-    if (addHistory) {
-      const db = readDb();
-      const historyCommand = createProjectCommand(
-        current,
-        project,
-        options.historyType || "project.change",
-        options.historyParams || { source: "bridge" },
-        options.historySource || "bridge",
-      );
-      if (historyCommand) {
-        db.history.unshift(historyCommand);
-        db.history = db.history.slice(0, HISTORY_LIMIT);
-        writeDb(db);
-      }
-    }
-    lastMtime = fs.existsSync(PROJECT_PATH)
-      ? fs.statSync(PROJECT_PATH).mtimeMs
+    savedProject = repository.saveProject(project, {
+      addHistory,
+      historyType: options.historyType,
+      historyParams: options.historyParams,
+      historySource: options.historySource || "bridge",
+    });
+    lastMtime = fs.existsSync(SQLITE_PATH)
+      ? fs.statSync(SQLITE_PATH).mtimeMs
       : lastMtime;
-    broadcastProject(project);
-    savedProject = project;
+    broadcastProject(savedProject);
   });
   writeQueue = writeTask.then(
     () => undefined,
@@ -431,6 +381,22 @@ async function runAiPrompt(data: z.infer<typeof AiPromptSchema>) {
   });
 }
 
+function watchRepositoryFile(filePath: string) {
+  fs.watchFile(filePath, { interval: 500 }, () => {
+    try {
+      if (!fs.existsSync(filePath)) return;
+      const stat = fs.statSync(filePath);
+      if (stat.mtimeMs !== lastMtime) {
+        lastMtime = stat.mtimeMs;
+        broadcastProject(readProject());
+      }
+    } catch {}
+  });
+}
+
+watchRepositoryFile(SQLITE_PATH);
+watchRepositoryFile(`${SQLITE_PATH}-wal`);
+
 fs.watchFile(PROJECT_PATH, { interval: 500 }, () => {
   try {
     if (!fs.existsSync(PROJECT_PATH)) return;
@@ -441,8 +407,6 @@ fs.watchFile(PROJECT_PATH, { interval: 500 }, () => {
     }
   } catch {}
 });
-
-migrateDbHistory();
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(
@@ -721,74 +685,57 @@ const server = http.createServer(async (req, res) => {
         `${asset}_sheet.png`,
       );
     }
-    if (url.pathname === "/api/export/godot" && req.method === "GET")
-      return json(req, res, 200, godotMetadata(readProject()));
-    if (url.pathname === "/api/export/atlas" && req.method === "GET")
-      return json(req, res, 200, atlasMetadata(readProject()));
-    if (url.pathname === "/api/export/unity" && req.method === "GET")
-      return json(req, res, 200, unityMetadata(readProject()));
+    if (url.pathname === "/api/export/godot" && req.method === "GET") {
+      const data = godotMetadata(readProject());
+      repository.recordExport("godot", "godot.animations.json", "application/json", data);
+      return json(req, res, 200, data);
+    }
+    if (url.pathname === "/api/export/atlas" && req.method === "GET") {
+      const data = atlasMetadata(readProject());
+      repository.recordExport("atlas", "atlas.json", "application/json", data);
+      return json(req, res, 200, data);
+    }
+    if (url.pathname === "/api/export/unity" && req.method === "GET") {
+      const data = unityMetadata(readProject());
+      repository.recordExport("unity", "unity.json", "application/json", data);
+      return json(req, res, 200, data);
+    }
+    if (url.pathname === "/api/export/json" && req.method === "GET")
+      return json(req, res, 200, repository.exportJson());
 
     if (url.pathname === "/api/login" && req.method === "POST") {
       const data = parseBody(await body(req), LoginSchema);
-      const db = readDb();
-      let user = db.users.find((u: any) => u.email === data.email);
-      if (!user) {
-        user = {
-          id: id(),
-          email: data.email || "local@pixel",
-          name: data.name || "Local User",
-        };
-        db.users.push(user);
-        writeDb(db);
-      }
+      const user = repository.upsertUser(data);
       return json(req, res, 200, { ok: true, user, token: user.id });
     }
     if (url.pathname === "/api/gallery" && req.method === "GET") {
-      const db = readDb();
-      return json(
-        req,
-        res,
-        200,
-        db.gallery.map((g: any) => ({
-          id: g.id,
-          name: g.name,
-          at: g.at,
-          asset: expandProject(g.project).godot.asset,
-          frames: expandProject(g.project).frames.length,
-        })),
-      );
+      return json(req, res, 200, repository.listGallery());
     }
     if (url.pathname === "/api/gallery" && req.method === "POST") {
       const data = parseBody(await body(req), GalleryPostSchema);
       const project = expandProject(data.project || readProject());
-      const db = readDb();
-      const item = {
-        id: id(),
+      const thumbnail = renderProjectPng(project).toString("base64");
+      const item = repository.addGalleryProject({
         name: data.name || project.godot.asset || "pixel_asset",
-        at: new Date().toISOString(),
-        project: compactProject(project),
-      };
-      db.gallery.unshift(item);
-      db.gallery = db.gallery.slice(0, 100);
-      writeDb(db);
+        project,
+        thumbnailBase64: thumbnail,
+      });
       return json(req, res, 200, { ...item, project });
     }
     if (url.pathname.startsWith("/api/gallery/") && req.method === "GET") {
-      const db = readDb();
-      const item = db.gallery.find(
-        (g: any) => g.id === url.pathname.split("/").pop(),
+      const project = repository.getGalleryProject(
+        url.pathname.split("/").pop() || "",
       );
-      return item
-        ? json(req, res, 200, expandProject(item.project))
+      return project
+        ? json(req, res, 200, project)
         : json(req, res, 404, { error: "not_found" });
     }
     if (url.pathname === "/api/history" && req.method === "GET") {
-      const db = readDb();
       return json(
         req,
         res,
         200,
-        db.history.map((h) => ({
+        repository.listHistory().map((h) => ({
           id: h.id,
           at: h.at,
           command: h.command.type,
@@ -818,6 +765,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.error(
-    `[pixel-bridge] http://${HOST}:${PORT} project=${PROJECT_PATH} ai=${aiProvider.name}`,
+    `[pixel-bridge] http://${HOST}:${PORT} sqlite=${SQLITE_PATH} ai=${aiProvider.name}`,
   );
 });

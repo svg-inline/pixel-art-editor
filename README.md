@@ -48,8 +48,9 @@ Use no ChatGPT/Cursor/Claude com o mesmo `cwd` do projeto.
 
 Por padrão, a bridge e o MCP gravam dados locais em `runtime/`:
 
-- `runtime/pixel-project.mcp.json`: projeto compartilhado atual.
-- `runtime/pixel-art-db.json`: galeria, usuários locais e histórico compacto.
+- `runtime/editor.sqlite`: banco local SQLite usado pela bridge e pelo MCP.
+- `runtime/pixel-project.mcp.json`: projeto legado/interoperabilidade usado na migração.
+- `runtime/pixel-art-db.json`: db JSON legado usado na migração.
 - `runtime/backups/`: backups criados antes de migrações ou resets.
 
 Esses arquivos são gerados em runtime e não entram no Git. Se arquivos legados existirem na raiz (`pixel-project.mcp.json` ou `pixel-art-db.json`), a bridge/MCP os migram para `runtime/` na primeira execução e criam backup antes de mover.
@@ -65,7 +66,7 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 ## O que foi atualizado nesta versão
 
 - `shared/pixel-core.ts` virou o núcleo comum: schema v2 com assets/animações/direções, normalização, migração de projetos antigos, RLE compacto, geração heurística, edição, paleta, QA, metadata Godot/Unity e composição RGBA.
-- Bridge reescrita com escrita atômica, fila de escrita, projeto em formato compacto no disco, leitura expandida para o editor, body limit e bind local em `127.0.0.1`.
+- Bridge reescrita com SQLite local, migrations, fila de escrita, leitura expandida para o editor, body limit e bind local em `127.0.0.1`.
 - Camada `server/ai/provider.ts`: usa provider local por padrão e aceita um provider HTTP externo via `PIXEL_AI_ENDPOINT` / `PIXEL_AI_API_KEY`.
 - MCP ganhou ferramentas reais de workflow: geração, edição por seleção, variação, recolor, limite de paleta, preview PNG base64, spritesheet PNG base64 e pacote Godot.
 - Web agora lê JSON compacto, envia seleção/operação no prompt e continua com fallback local quando a bridge está offline.
@@ -119,9 +120,24 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 - `GET /api/export/godot`: metadata Godot.
 - `GET /api/export/atlas`: atlas JSON.
 - `GET /api/export/unity`: metadata Unity.
+- `GET /api/export/json`: pacote JSON de interoperabilidade com projeto, galeria e histórico.
 - `GET /api/quality`: relatório de QA.
 - `GET/POST /api/gallery`: galeria local.
 - `GET /api/history`: histórico local.
+
+## Persistência SQLite
+
+A bridge e o MCP usam `server/db.ts` como camada de persistência local. O banco padrão fica em `runtime/editor.sqlite` e é criado com migrations em `server/migrations/`.
+
+Variáveis úteis:
+
+```bash
+PIXEL_SQLITE_PATH=./runtime/editor.sqlite
+PIXEL_PROJECT_PATH=./runtime/pixel-project.mcp.json # legado/migração
+PIXEL_DB_PATH=./runtime/pixel-art-db.json          # legado/migração
+```
+
+Na primeira execução, projetos, galeria, usuários e histórico legados dos JSONs são migrados para SQLite. Os JSONs continuam úteis como interoperabilidade/export legado; o endpoint `GET /api/export/json` exporta um pacote JSON com projeto, galeria e histórico.
 
 ## Provider de IA externo
 

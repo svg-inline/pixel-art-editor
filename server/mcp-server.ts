@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { z } from "zod";
@@ -41,96 +40,48 @@ import {
   type Project,
 } from "../shared/pixel-core.ts";
 import {
-  createProjectCommand,
-  HISTORY_LIMIT,
-  isHistoryCommand,
-  type HistoryCommand,
   type HistoryCommandName,
 } from "../shared/history.ts";
 import { createAiProvider, type AiOperation } from "./ai/provider.ts";
+import { ProjectRepository } from "./db.ts";
 import { encodePngRgba } from "./png.ts";
 import {
   defaultDbPath,
   defaultProjectPath,
+  defaultSqlitePath,
   migrateRuntimeFiles,
-  writeInitialRuntimeFiles,
 } from "./runtime-files.ts";
 
 loadLocalEnv();
 
-const projectPath = path.resolve(
+const legacyProjectPath = path.resolve(
   process.env.PIXEL_PROJECT_PATH || defaultProjectPath(),
 );
-const dbPath = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
-const writeCompact = process.env.PIXEL_PROJECT_COMPACT !== "0";
+const legacyDbPath = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
+const sqlitePath = path.resolve(
+  process.env.PIXEL_SQLITE_PATH || defaultSqlitePath(),
+);
 const aiProvider = createAiProvider();
-type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
-function readJson(filePath: string, fallback: any) {
-  if (!fs.existsSync(filePath)) return fallback;
-  const text = fs.readFileSync(filePath, "utf8");
-  return text.trim() ? JSON.parse(text) : fallback;
-}
-function atomicWrite(filePath: string, data: string | Buffer) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, filePath);
-}
-function readDb(): Db {
-  const db = readJson(dbPath, { users: [], gallery: [], history: [] });
-  return {
-    users: Array.isArray(db.users) ? db.users : [],
-    gallery: Array.isArray(db.gallery) ? db.gallery : [],
-    history: Array.isArray(db.history)
-      ? db.history.filter(isHistoryCommand).slice(0, HISTORY_LIMIT)
-      : [],
-  };
-}
-function writeDb(db: Db) {
-  atomicWrite(dbPath, JSON.stringify(db, null, 2));
-}
-function migrateDbHistory() {
-  const raw = readJson(dbPath, { users: [], gallery: [], history: [] });
-  const db = readDb();
-  if (
-    !Array.isArray(raw.history) ||
-    raw.history.length !== db.history.length ||
-    raw.history.some((entry: any) => !isHistoryCommand(entry))
-  )
-    writeDb(db);
-}
-migrateRuntimeFiles(projectPath, dbPath);
-writeInitialRuntimeFiles(projectPath, dbPath);
+migrateRuntimeFiles(legacyProjectPath, legacyDbPath);
+const repository = new ProjectRepository(sqlitePath, {
+  legacyProjectPath,
+  legacyDbPath,
+});
 
-let project: Project = expandProject(readJson(projectPath, {}));
+let project: Project = repository.getProject();
 function reload() {
-  project = expandProject(readJson(projectPath, project));
+  project = repository.getProject();
   return project;
 }
 function save(
   historyType: HistoryCommandName = "project.change",
   params?: Record<string, unknown>,
 ) {
-  const current = expandProject(readJson(projectPath, {}));
-  project = expandProject(project);
-  project.revision = Math.max(current.revision, project.revision) + 1;
-  atomicWrite(
-    projectPath,
-    JSON.stringify(writeCompact ? compactProject(project) : project, null, 2),
-  );
-  const historyCommand = createProjectCommand(
-    current,
-    project,
+  project = repository.saveProject(project, {
     historyType,
-    params,
-    "mcp",
-  );
-  if (historyCommand) {
-    const db = readDb();
-    db.history.unshift(historyCommand);
-    db.history = db.history.slice(0, HISTORY_LIMIT);
-    writeDb(db);
-  }
+    historyParams: params,
+    historySource: "mcp",
+  });
 }
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -213,8 +164,6 @@ function godotAssetSpritesheetBase64() {
 }
 
 const server = new McpServer({ name: "pixel-art-256-mcp", version: "3.0.0" });
-
-migrateDbHistory();
 
 server.tool(
   "create_frame",
