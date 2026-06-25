@@ -62,6 +62,7 @@ export type Project = {
   quality?: Record<string, unknown>;
 };
 export type Selection = { x: number; y: number; w: number; h: number };
+export type PixelSelectionClip = Selection & { pixels: PixelArray };
 export type ToolResult = { project: Project; message: string };
 
 export function uid() {
@@ -375,6 +376,18 @@ export function selectionBounds(sel?: Selection | null): Selection | null {
   const x2 = clamp(Math.max(ax, bx), 0, SIZE - 1),
     y2 = clamp(Math.max(ay, by), 0, SIZE - 1);
   return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
+}
+
+export function rotate90Selection(clip: PixelSelectionClip): PixelSelectionClip {
+  const w = clip.h;
+  const h = clip.w;
+  const pixels = new Array(clip.pixels.length).fill(null);
+  for (let y = 0; y < clip.h; y++)
+    for (let x = 0; x < clip.w; x++) {
+      const src = clip.pixels[y * clip.w + x];
+      pixels[x * w + (w - 1 - y)] = src;
+    }
+  return { ...clip, w, h, pixels };
 }
 
 export type ObjectBounds = Selection & {

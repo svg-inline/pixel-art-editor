@@ -11,6 +11,7 @@ import {
   godotMetadata,
   indexOf,
   qualityReport,
+  rotate90Selection,
   SIZE,
 } from "../shared/pixel-core.ts";
 
@@ -113,4 +114,48 @@ test("prompt parser honors explicit animation and direction fields", () => {
   assert.equal(project.godot.animation, "idle_s");
   assert.equal(project.godot.direction, "S");
   assert.equal(project.godot.fps, 6);
+});
+
+test("rotates rectangular selection 90 degrees clockwise", () => {
+  const rotated = rotate90Selection({
+    x: 10,
+    y: 20,
+    w: 3,
+    h: 2,
+    pixels: ["#111111", "#222222", "#333333", "#444444", "#555555", "#666666"],
+  });
+
+  assert.equal(rotated.x, 10);
+  assert.equal(rotated.y, 20);
+  assert.equal(rotated.w, 2);
+  assert.equal(rotated.h, 3);
+  assert.deepEqual(rotated.pixels, [
+    "#444444",
+    "#111111",
+    "#555555",
+    "#222222",
+    "#666666",
+    "#333333",
+  ]);
+});
+
+test("rotates vertical selections and preserves transparent pixels", () => {
+  const rotated = rotate90Selection({
+    x: 0,
+    y: 0,
+    w: 2,
+    h: 3,
+    pixels: ["#111111", null, "#222222", "#333333", null, "#444444"],
+  });
+
+  assert.equal(rotated.w, 3);
+  assert.equal(rotated.h, 2);
+  assert.deepEqual(rotated.pixels, [
+    null,
+    "#222222",
+    "#111111",
+    "#444444",
+    "#333333",
+    null,
+  ]);
 });

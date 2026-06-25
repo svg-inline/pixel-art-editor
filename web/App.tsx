@@ -21,6 +21,7 @@ import {
   normalizeProject,
   qualityReport,
   replaceGlobalColor as replaceProjectColor,
+  rotate90Selection,
   selectionBounds,
   SIZE,
   slug,
@@ -32,6 +33,7 @@ import type {
   Layer,
   Pixel,
   PixelArray,
+  PixelSelectionClip,
   Project,
   ProjectBackground,
   Selection,
@@ -68,7 +70,7 @@ type AutosaveStatus =
   | "error"
   | "conflict";
 type Point = Pick<Selection, "x" | "y">;
-type Clip = Selection & { pixels: PixelArray };
+type Clip = PixelSelectionClip;
 type GalleryItem = {
   id: string;
   name: string;
@@ -227,6 +229,17 @@ function pastePixels(
         ty = targetY + y;
       if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE)
         pixels[idx(tx, ty)] = clip.pixels[y * clip.w + x];
+    }
+}
+function eraseClipPixels(layer: Layer, clip: Clip) {
+  const pixels = expandPixels(layer.pixels);
+  layer.pixels = pixels;
+  for (let y = 0; y < clip.h; y++)
+    for (let x = 0; x < clip.w; x++) {
+      const tx = clip.x + x,
+        ty = clip.y + y;
+      if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE)
+        pixels[idx(tx, ty)] = null;
     }
 }
 
@@ -784,34 +797,31 @@ function App() {
   function transformSelection(kind: "mirrorH" | "mirrorV" | "rotate90") {
     const clip = getSelectionPixels(activeLayerOf(frame), selection);
     if (!clip) return;
-    let pixels = new Array(clip.pixels.length).fill(null),
-      w = clip.w,
-      h = clip.h;
-    for (let y = 0; y < clip.h; y++)
-      for (let x = 0; x < clip.w; x++) {
-        const src = clip.pixels[y * clip.w + x];
-        if (kind === "mirrorH") pixels[y * w + (w - 1 - x)] = src;
-        if (kind === "mirrorV") pixels[(h - 1 - y) * w + x] = src;
-        if (kind === "rotate90") {
-          w = clip.h;
-          h = clip.w;
-          pixels = new Array(w * h).fill(null);
-        }
-      }
-    if (kind === "rotate90")
+    let nextClip: Clip;
+    if (kind === "rotate90") {
+      nextClip = rotate90Selection(clip);
+    } else {
+      const pixels = new Array(clip.pixels.length).fill(null);
       for (let y = 0; y < clip.h; y++)
         for (let x = 0; x < clip.w; x++)
-          pixels[x * w + (w - 1 - y)] = clip.pixels[y * clip.w + x];
-    updateProject((p) =>
-      pastePixels(
-        activeLayerOf(activeFrameOf(p)),
-        { ...clip, w, h, pixels },
-        clip.x,
-        clip.y,
-        true,
-      ),
-    );
-    setSelection({ x: clip.x, y: clip.y, w: w - 1, h: h - 1 });
+          pixels[
+            kind === "mirrorH"
+              ? y * clip.w + (clip.w - 1 - x)
+              : (clip.h - 1 - y) * clip.w + x
+          ] = clip.pixels[y * clip.w + x];
+      nextClip = { ...clip, pixels };
+    }
+    updateProject((p) => {
+      const layer = activeLayerOf(activeFrameOf(p));
+      eraseClipPixels(layer, clip);
+      pastePixels(layer, nextClip, clip.x, clip.y);
+    });
+    setSelection({
+      x: clip.x,
+      y: clip.y,
+      w: nextClip.w - 1,
+      h: nextClip.h - 1,
+    });
   }
   function applyDitherToSelection() {
     const b = selectionBounds(selection);
