@@ -104,6 +104,11 @@ test("generates common Godot and atlas metadata from normalized projects", () =>
   assert.equal(godot.asset, "hero_knight");
   assert.equal(godot.animations[0].frames, 2);
   assert.equal(godot.animations[0].direction, "W");
+  assert.equal(godot.sheet.layout, "animation_rows");
+  assert.equal(
+    godot.files.asset_spritesheet,
+    "res://assets/hero_knight/spritesheets/hero_knight_sheet.png",
+  );
   assert.equal(
     godot.files.spritesheet,
     "res://assets/hero_knight/spritesheets/hero_knight_idle_west_sheet.png",
@@ -159,6 +164,16 @@ test("normalizes v2 assets, animations, pivot and hitboxes", () => {
   assert.deepEqual(project.frames[0].pivot, { x: 127, y: 190 });
   assert.equal(project.frames[0].hitboxes[0].name, "Body");
   assert.deepEqual(project.palette, ["#abcdef"]);
+  const godot = godotMetadata(project);
+  assert.deepEqual(godot.animations[0].frame_rects[0].pivot, {
+    x: 128,
+    y: 128,
+  });
+  assert.deepEqual(godot.animations[1].frame_rects[0].pivot, {
+    x: 127,
+    y: 190,
+  });
+  assert.equal(godot.animations[1].frame_rects[0].hitboxes[0].name, "Body");
 });
 
 test("prompt parser honors explicit animation and direction fields", () => {

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { loadLocalEnv } from "./load-env.ts";
 import {
   activeFrameOf,
+  activeAssetOf,
   atlasMetadata,
   compactProject,
   compositeFrameRgba,
@@ -157,6 +158,7 @@ const ExtendAnimationSchema = z
     totalFrames: z.number().int().min(1).max(64).default(8),
   })
   .passthrough();
+const SetActiveAssetSchema = z.object({ asset: z.string() }).passthrough();
 const LoginSchema = z
   .object({
     email: z.string().email().optional(),
@@ -364,6 +366,29 @@ function renderSpritesheetPng(project: Project) {
   });
   return encodePngRgba(width, height, sheet);
 }
+function renderGodotAssetSpritesheetPng(project: Project) {
+  const asset = activeAssetOf(project);
+  const width = SIZE * Math.max(
+    1,
+    ...asset.animations.map((animation) => animation.frames.length),
+  );
+  const height = SIZE * Math.max(1, asset.animations.length);
+  const sheet = new Uint8Array(width * height * 4);
+  asset.animations.forEach((animation, row) => {
+    animation.frames.forEach((frame, frameIndex) => {
+      const rgba = compositeFrameRgba(frame, project.background);
+      for (let y = 0; y < SIZE; y++) {
+        const sourceOffset = y * SIZE * 4;
+        const targetOffset = ((row * SIZE + y) * width + frameIndex * SIZE) * 4;
+        sheet.set(
+          rgba.subarray(sourceOffset, sourceOffset + SIZE * 4),
+          targetOffset,
+        );
+      }
+    });
+  });
+  return encodePngRgba(width, height, sheet);
+}
 
 fs.watchFile(PROJECT_PATH, { interval: 500 }, () => {
   try {
@@ -405,6 +430,27 @@ const server = http.createServer(async (req, res) => {
       return json(req, res, 200, readProject());
     if (url.pathname === "/api/project.compact" && req.method === "GET")
       return json(req, res, 200, compactProject(readProject()));
+    if (url.pathname === "/api/assets" && req.method === "GET") {
+      const project = readProject();
+      return json(
+        req,
+        res,
+        200,
+        project.assets.map((asset) => ({
+          id: asset.id,
+          name: asset.name,
+          active: asset.id === project.activeAssetId,
+          animations: asset.animations.map((animation) => ({
+            id: animation.id,
+            name: animation.name,
+            direction: animation.direction,
+            fps: animation.fps,
+            loop: animation.loop,
+            frames: animation.frames.length,
+          })),
+        })),
+      );
+    }
     if (url.pathname === "/api/project" && req.method === "POST") {
       const data = parseBody(await body(req), ProjectPostSchema);
       const projectInput = data?.project || data;
@@ -527,6 +573,26 @@ const server = http.createServer(async (req, res) => {
         ),
       );
     }
+    if (
+      url.pathname === "/api/tools/set-active-asset" &&
+      req.method === "POST"
+    ) {
+      const data = parseBody(await body(req), SetActiveAssetSchema);
+      const project = readProject();
+      const asset = project.assets.find(
+        (item) => item.id === data.asset || item.name === data.asset,
+      );
+      if (!asset) return json(req, res, 404, { error: "asset_not_found" });
+      project.activeAssetId = asset.id;
+      project.activeAnimationId = asset.animations[0].id;
+      project.activeFrameId = asset.animations[0].frames[0]?.id || "";
+      return json(
+        req,
+        res,
+        200,
+        await writeProject(project, { expectedRevision: project.revision }),
+      );
+    }
     if (url.pathname === "/api/quality" && req.method === "GET")
       return json(
         req,
@@ -555,6 +621,16 @@ const server = http.createServer(async (req, res) => {
         res,
         renderSpritesheetPng(project),
         `${asset}_${anim}_sheet.png`,
+      );
+    }
+    if (url.pathname === "/api/godot/spritesheet.png" && req.method === "GET") {
+      const project = readProject();
+      const asset = slug(project.godot.asset);
+      return png(
+        req,
+        res,
+        renderGodotAssetSpritesheetPng(project),
+        `${asset}_sheet.png`,
       );
     }
     if (url.pathname === "/api/export/godot" && req.method === "GET")

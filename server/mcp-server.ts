@@ -172,6 +172,27 @@ function spritesheetBase64() {
   });
   return encodePngRgba(width, SIZE, rgba).toString("base64");
 }
+function godotAssetSpritesheetBase64() {
+  reload();
+  const asset = activeAssetOf(project);
+  const width = SIZE * Math.max(
+    1,
+    ...asset.animations.map((animation) => animation.frames.length),
+  );
+  const height = SIZE * Math.max(1, asset.animations.length);
+  const rgba = new Uint8Array(width * height * 4);
+  asset.animations.forEach((animation, row) => {
+    animation.frames.forEach((frame, frameIndex) => {
+      const frameRgba = compositeFrameRgba(frame, project.background);
+      for (let y = 0; y < SIZE; y++)
+        rgba.set(
+          frameRgba.subarray(y * SIZE * 4, y * SIZE * 4 + SIZE * 4),
+          ((row * SIZE + y) * width + frameIndex * SIZE) * 4,
+        );
+    });
+  });
+  return encodePngRgba(width, height, rgba).toString("base64");
+}
 
 const server = new McpServer({ name: "pixel-art-256-mcp", version: "3.0.0" });
 
@@ -746,7 +767,7 @@ server.tool(
               animation: anim,
               metadata: godotMetadata(project),
               atlas: atlasMetadata(project),
-              spritesheet_png_base64: spritesheetBase64(),
+              spritesheet_png_base64: godotAssetSpritesheetBase64(),
             },
             null,
             2,

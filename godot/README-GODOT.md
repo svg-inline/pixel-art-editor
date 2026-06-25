@@ -21,19 +21,26 @@ Ative em `Project > Project Settings > Plugins > Pixel Art MCP`.
 O dock permite:
 
 - enviar prompt para a bridge local `http://127.0.0.1:8787`;
+- listar assets disponíveis na bridge;
+- exibir preview PNG;
 - atualizar metadata Godot exportada pelo backend;
-- criar `SpriteFrames .tres` a partir do spritesheet e do JSON.
+- importar o asset completo, baixando spritesheet PNG e metadata;
+- criar `SpriteFrames .tres` com animações, FPS e loop do metadata.
 
 Estrutura esperada no projeto Godot:
 
 ```txt
 res://assets/<asset>/
 ├─ spritesheets/
+│  ├─ <asset>_sheet.png
+│  ├─ <asset>_sheet.png.pixel_art_import.json
 │  └─ <asset>_<animation>_sheet.png
 └─ metadata/
    ├─ <asset>_<animation>.atlas.json
    └─ <asset>.animations.json
 ```
+
+O import ajusta `rendering/textures/canvas_textures/default_texture_filter` para nearest/pixel-perfect e salva um JSON lateral com as configurações de importação esperadas. O metadata preserva duração dos frames, pivot e hitboxes/hurtboxes/attackboxes quando existirem.
 
 ## 2. Script direto
 

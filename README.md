@@ -101,6 +101,7 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 - `GET /api/events`: SSE para atualizações do projeto.
 - `GET /api/project`: lê projeto expandido.
 - `GET /api/project.compact`: lê projeto compacto RLE.
+- `GET /api/assets`: lista assets/animações disponíveis.
 - `POST /api/project`: salva projeto.
 - `POST /api/ai-prompt`: aplica prompt com `operation`, `project` e `selection`.
 - `POST /api/tools/edit-selection`: edita seleção.
@@ -108,8 +109,10 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 - `POST /api/tools/limit-colors`: limita paleta.
 - `POST /api/tools/create-variation`: cria variação.
 - `POST /api/tools/extend-animation`: estende animação.
+- `POST /api/tools/set-active-asset`: seleciona o asset ativo para exportação/importação Godot.
 - `GET /api/preview.png`: preview PNG do frame.
 - `GET /api/spritesheet.png`: spritesheet horizontal PNG.
+- `GET /api/godot/spritesheet.png`: spritesheet PNG do asset ativo, com uma linha por animação.
 - `GET /api/export/godot`: metadata Godot.
 - `GET /api/export/atlas`: atlas JSON.
 - `GET /api/export/unity`: metadata Unity.
@@ -166,6 +169,7 @@ Observação: token em query string pode aparecer em logs. Para uma versão prof
 Arquivos exportados:
 
 - `<asset>_<animation>_sheet.png`
+- `<asset>_sheet.png`
 - `<asset>_<animation>.atlas.json`
 - `<asset>.animations.json`
 - `<asset>.spriteframes.tres` gerado pelo addon/script dentro do Godot
@@ -175,6 +179,7 @@ Estrutura recomendada:
 ```txt
 res://assets/<asset>/
 ├─ spritesheets/
+│  ├─ <asset>_sheet.png
 │  └─ <asset>_<animation>_sheet.png
 └─ metadata/
    ├─ <asset>_<animation>.atlas.json
