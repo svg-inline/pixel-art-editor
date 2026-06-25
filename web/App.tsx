@@ -24,6 +24,7 @@ import {
   isHex,
   limitColors as limitProjectColors,
   normalizeProject,
+  normalizeBoxKind,
   qualityReport,
   replaceGlobalColor as replaceProjectColor,
   rotate90Selection,
@@ -43,6 +44,7 @@ import type {
   Project,
   ProjectBackground,
   Selection,
+  BoxKind,
 } from "../shared/pixel-core.ts";
 import {
   applyCommand,
@@ -51,6 +53,14 @@ import {
   type HistoryCommand,
   type HistoryCommandName,
 } from "../shared/history.ts";
+import {
+  asepriteJson,
+  encodeGifFromProject,
+  encodeZip,
+  professionalMetadataFiles,
+  projectFromAsepriteJson,
+  tilemapMetadata,
+} from "../shared/pro-export.ts";
 import {
   renderFrameCached,
   renderFrameFresh,
@@ -126,7 +136,6 @@ type RemoteHistoryItem = {
   pixelChanges: number;
   params?: Record<string, unknown>;
 };
-type BoxKind = "hitbox" | "hurtbox" | "attackbox";
 type ShapeTool = Extract<Tool, "line" | "rect" | "ellipse">;
 type ShapePreviewState = {
   tool: ShapeTool;
@@ -257,6 +266,25 @@ function downloadCanvas(filename: string, canvas: HTMLCanvasElement) {
   a.href = canvas.toDataURL("image/png");
   a.click();
 }
+function downloadBytes(filename: string, data: Uint8Array, type: string) {
+  const a = document.createElement("a");
+  const copy = new Uint8Array(data);
+  a.download = filename;
+  a.href = URL.createObjectURL(new Blob([copy.buffer], { type }));
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function canvasBlob(canvas: HTMLCanvasElement, type = "image/png") {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("blob_failed"))),
+      type,
+    );
+  });
+}
+async function canvasBytes(canvas: HTMLCanvasElement, type = "image/png") {
+  return new Uint8Array(await (await canvasBlob(canvas, type)).arrayBuffer());
+}
 function readJsonFile(file: File): Promise<unknown> {
   return file.text().then((t) => JSON.parse(t));
 }
@@ -364,6 +392,7 @@ function App() {
   const [showNextOnion, setShowNextOnion] = useState(true);
   const [onionPrevOpacity, setOnionPrevOpacity] = useState(25);
   const [onionNextOpacity, setOnionNextOpacity] = useState(18);
+  const [showGameData, setShowGameData] = useState(true);
   const [history, setHistory] = useState<HistoryCommand[]>([]);
   const [redo, setRedo] = useState<HistoryCommand[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -428,6 +457,7 @@ function App() {
     showOnion,
     selection,
     shapePreview,
+    showGameData,
     gridMode,
     gridDensity,
     gridStep,
@@ -814,6 +844,48 @@ function App() {
     }
     ctx.restore();
   }
+  function boxColor(kind: BoxKind) {
+    if (kind === "hurtbox") return "#38bdf8";
+    if (kind === "attackbox") return "#fb7185";
+    return "#22c55e";
+  }
+  function drawGameDataOverlay(ctx: CanvasRenderingContext2D) {
+    if (!showGameData) return;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.font = `${Math.max(10, zoom * 3)}px Arial`;
+    ctx.textBaseline = "top";
+    for (const box of frame.hitboxes) {
+      const kind = normalizeBoxKind(box.kind || box.name);
+      const color = boxColor(kind);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.setLineDash(kind === "hurtbox" ? [4, 4] : kind === "attackbox" ? [8, 3] : []);
+      ctx.strokeRect(
+        box.x * zoom + 0.5,
+        box.y * zoom + 0.5,
+        box.w * zoom,
+        box.h * zoom,
+      );
+      ctx.setLineDash([]);
+      ctx.fillText(box.name || kind, box.x * zoom + 3, box.y * zoom + 3);
+    }
+    const px = frame.pivot.x * zoom + zoom / 2;
+    const py = frame.pivot.y * zoom + zoom / 2;
+    ctx.strokeStyle = "#facc15";
+    ctx.fillStyle = "#facc15";
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(px - zoom * 2, py);
+    ctx.lineTo(px + zoom * 2, py);
+    ctx.moveTo(px, py - zoom * 2);
+    ctx.lineTo(px, py + zoom * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px, py, Math.max(2, zoom / 2), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
   function renderCanvas() {
     const c = canvasRef.current;
     if (!c) return;
@@ -837,6 +909,7 @@ function App() {
         onionNextOpacity / 100,
       );
     drawDynamicGrid(ctx);
+    drawGameDataOverlay(ctx);
     if (selection) drawRectOverlay(ctx, selection, "#60a5fa");
     drawShapeOverlay(ctx);
     const now = performance.now();
@@ -1121,6 +1194,7 @@ function App() {
       frame.hitboxes.push({
         id: uid(),
         name: kind,
+        kind,
         x: Math.max(0, Math.floor(frame.pivot.x) - 16),
         y: Math.max(0, Math.floor(frame.pivot.y) - 16),
         w: 32,
@@ -1317,7 +1391,7 @@ function App() {
     if (!f) return;
     readJsonFile(f).then((json) => {
       const before = projectRef.current;
-      const next = normalizeProject(json);
+      const next = normalizeProject(projectFromAsepriteJson(json) || json);
       commitHistory(before, next, "project.replace", { source: "json" });
       markDirty();
       projectRef.current = next;
@@ -1330,19 +1404,76 @@ function App() {
       renderFrameFresh(frame, project.background),
     );
   }
-  function exportSpritesheet() {
+  function spritesheetCanvas(projectInput: Project) {
     const sheet = document.createElement("canvas");
-    sheet.width = SIZE * project.frames.length;
+    sheet.width = SIZE * projectInput.frames.length;
     sheet.height = SIZE;
     const ctx = sheet.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) return sheet;
     ctx.imageSmoothingEnabled = false;
-    project.frames.forEach((f, i) =>
-      ctx.drawImage(renderFrameFresh(f, project.background), i * SIZE, 0),
+    projectInput.frames.forEach((f, i) =>
+      ctx.drawImage(renderFrameFresh(f, projectInput.background), i * SIZE, 0),
     );
+    return sheet;
+  }
+  function exportSpritesheet() {
     downloadCanvas(
       `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`,
-      sheet,
+      spritesheetCanvas(project),
+    );
+  }
+  async function exportWebp() {
+    const asset = slug(project.godot.asset),
+      anim = slug(project.godot.animation);
+    downloadBytes(
+      `${asset}_${anim}_sheet.webp`,
+      await canvasBytes(spritesheetCanvas(project), "image/webp"),
+      "image/webp",
+    );
+  }
+  function exportGif() {
+    const asset = slug(project.godot.asset),
+      anim = slug(project.godot.animation);
+    downloadBytes(
+      `${asset}_${anim}.gif`,
+      encodeGifFromProject(project),
+      "image/gif",
+    );
+  }
+  async function exportZip() {
+    const asset = slug(project.godot.asset),
+      anim = slug(project.godot.animation);
+    const zip = encodeZip([
+      {
+        name: `png/${asset}_${anim}_f${frameIndex + 1}.png`,
+        data: await canvasBytes(renderFrameFresh(frame, project.background)),
+      },
+      {
+        name: `png/${asset}_${anim}_sheet.png`,
+        data: await canvasBytes(spritesheetCanvas(project)),
+      },
+      ...professionalMetadataFiles(project),
+    ]);
+    downloadBytes(
+      `${asset}_${anim}_export.zip`,
+      zip,
+      "application/zip",
+    );
+  }
+  function exportAsepriteJson() {
+    const asset = slug(project.godot.asset),
+      anim = slug(project.godot.animation);
+    downloadText(
+      `${asset}_${anim}.aseprite.json`,
+      JSON.stringify(asepriteJson(project), null, 2),
+    );
+  }
+  function exportTilemapJson() {
+    const asset = slug(project.godot.asset),
+      anim = slug(project.godot.animation);
+    downloadText(
+      `${asset}_${anim}.tilemap.json`,
+      JSON.stringify(tilemapMetadata(project), null, 2),
     );
   }
   function exportAtlasJson() {
@@ -1971,6 +2102,11 @@ function App() {
         </label>
         <button onClick={exportPng}>PNG frame</button>
         <button onClick={exportSpritesheet}>Spritesheet</button>
+        <button onClick={exportGif}>GIF</button>
+        <button onClick={exportWebp}>WebP sheet</button>
+        <button onClick={exportZip}>ZIP pacote</button>
+        <button onClick={exportAsepriteJson}>Aseprite JSON</button>
+        <button onClick={exportTilemapJson}>Tilemap JSON</button>
         <button onClick={exportAtlasJson}>Atlas JSON</button>
         <button onClick={exportGodotJson}>Godot JSON</button>
         <button onClick={exportUnityJson}>Unity JSON</button>
@@ -2067,6 +2203,14 @@ function App() {
 
         <h2>Game data</h2>
         <div className="game-data">
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={showGameData}
+              onChange={(e) => setShowGameData(e.target.checked)}
+            />{" "}
+            mostrar pivot e boxes
+          </label>
           <div className="two-cols">
             <label>
               Pivot X{" "}
@@ -2104,11 +2248,26 @@ function App() {
           </div>
           {frame.hitboxes.map((box, i) => (
             <div className="box-row" key={box.id}>
+              <select
+                value={normalizeBoxKind(box.kind || box.name)}
+                onChange={(e) =>
+                  updateActiveFrame((fr) => {
+                    const kind = e.target.value as BoxKind;
+                    fr.hitboxes[i].kind = kind;
+                    fr.hitboxes[i].name = kind;
+                  })
+                }
+              >
+                <option value="hitbox">hitbox</option>
+                <option value="hurtbox">hurtbox</option>
+                <option value="attackbox">attackbox</option>
+              </select>
               <input
                 value={box.name}
                 onChange={(e) =>
                   updateActiveFrame((fr) => {
                     fr.hitboxes[i].name = e.target.value;
+                    fr.hitboxes[i].kind = normalizeBoxKind(e.target.value);
                   })
                 }
               />

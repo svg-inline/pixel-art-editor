@@ -206,7 +206,7 @@ canvas {
 }
 .box-row {
   display: grid;
-  grid-template-columns: 1fr repeat(4, 48px) auto;
+  grid-template-columns: 82px 1fr repeat(4, 48px) auto;
   gap: 4px;
   align-items: center;
   border-top: 1px solid #1f2937;

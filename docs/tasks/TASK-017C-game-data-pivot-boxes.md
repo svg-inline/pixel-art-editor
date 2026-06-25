@@ -10,11 +10,11 @@ Expor dados de gameplay por frame para exportação de sprites.
 
 ## Checklist
 
-- [ ] Pivot/origin por frame.
-- [ ] Hitbox.
-- [ ] Hurtbox.
-- [ ] Attackbox.
-- [ ] Dados preservados nos exports existentes.
+- [x] Pivot/origin por frame.
+- [x] Hitbox.
+- [x] Hurtbox.
+- [x] Attackbox.
+- [x] Dados preservados nos exports existentes.
 
 ## Critérios de aceite
 

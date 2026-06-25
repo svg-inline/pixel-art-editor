@@ -33,9 +33,11 @@ export type Layer = {
   pixels: PixelArray | RlePixels;
 };
 export type Point = { x: number; y: number };
+export type BoxKind = "hitbox" | "hurtbox" | "attackbox";
 export type Hitbox = Selection & {
   id: string;
   name: string;
+  kind: BoxKind;
 };
 export type Frame = {
   id: string;
@@ -199,6 +201,13 @@ function normalizeDirection(input: any, fallback: Direction = "W"): Direction {
     : fallback;
 }
 
+export function normalizeBoxKind(input: any): BoxKind {
+  const value = String(input || "").toLowerCase();
+  if (value.includes("hurt")) return "hurtbox";
+  if (value.includes("attack")) return "attackbox";
+  return "hitbox";
+}
+
 function normalizeFrame(frame: any, frameIndex: number): Frame {
   const layers =
     Array.isArray(frame?.layers) && frame.layers.length
@@ -236,6 +245,7 @@ function normalizeFrame(frame: any, frameIndex: number): Frame {
     ? frame.hitboxes.map((hitbox: any, hitboxIndex: number) => ({
         id: hitbox?.id || uid(),
         name: String(hitbox?.name || `Hitbox ${hitboxIndex + 1}`),
+        kind: normalizeBoxKind(hitbox?.kind || hitbox?.type || hitbox?.name),
         x: clamp(Math.round(Number(hitbox?.x || 0)), 0, SIZE - 1),
         y: clamp(Math.round(Number(hitbox?.y || 0)), 0, SIZE - 1),
         w: clamp(Math.round(Number(hitbox?.w || 1)), 1, SIZE),
@@ -1358,7 +1368,10 @@ export function godotMetadata(projectInput: any) {
       h: SIZE,
       duration: frame.duration || Math.round(1000 / animation.fps),
       pivot: frame.pivot,
-      hitboxes: frame.hitboxes,
+      hitboxes: frame.hitboxes.map((hitbox) => ({
+        ...hitbox,
+        type: hitbox.kind,
+      })),
     })),
   }));
   return {
@@ -1399,6 +1412,7 @@ export function godotMetadata(projectInput: any) {
         frame.hitboxes.map((hitbox) => ({
           animation: animation.name,
           frame: frameIndex,
+          type: hitbox.kind,
           ...hitbox,
         })),
       ),
@@ -1422,7 +1436,10 @@ export function atlasMetadata(projectInput: any) {
           frame: { x: i * SIZE, y: 0, w: SIZE, h: SIZE },
           duration: frame.duration || Math.round(1000 / project.godot.fps),
           pivot: frame.pivot,
-          hitboxes: frame.hitboxes,
+          hitboxes: frame.hitboxes.map((hitbox) => ({
+            ...hitbox,
+            type: hitbox.kind,
+          })),
         },
       ]),
     ),
@@ -1449,7 +1466,10 @@ export function unityMetadata(projectInput: any) {
       height: SIZE,
       pivot: { x: frame.pivot.x / SIZE, y: frame.pivot.y / SIZE },
       duration: frame.duration || Math.round(1000 / project.godot.fps),
-      hitboxes: frame.hitboxes,
+      hitboxes: frame.hitboxes.map((hitbox) => ({
+        ...hitbox,
+        type: hitbox.kind,
+      })),
     })),
   };
 }

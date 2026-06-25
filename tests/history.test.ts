@@ -136,7 +136,15 @@ test("frame pivot and hitbox changes are stored as frame patch", () => {
   const after = expandProject(before);
   const frame = activeFrameOf(after);
   frame.pivot = { x: 96, y: 144 };
-  frame.hitboxes.push({ id: "box-1", name: "hitbox", x: 10, y: 20, w: 30, h: 40 });
+  frame.hitboxes.push({
+    id: "box-1",
+    name: "hitbox",
+    kind: "hitbox",
+    x: 10,
+    y: 20,
+    w: 30,
+    h: 40,
+  });
 
   const command = createProjectCommand(
     before,

@@ -10,11 +10,11 @@ Adicionar formatos úteis para pipelines de jogos.
 
 ## Checklist
 
-- [ ] Exportar GIF.
-- [ ] Exportar WebP.
-- [ ] Exportar ZIP com PNG + atlas + metadata.
-- [ ] Import/export JSON compatível com Aseprite.
-- [ ] Tilemap/tileset.
+- [x] Exportar GIF.
+- [x] Exportar WebP.
+- [x] Exportar ZIP com PNG + atlas + metadata.
+- [x] Import/export JSON compatível com Aseprite.
+- [x] Tilemap/tileset.
 
 ## Critérios de aceite
 

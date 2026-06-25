@@ -15,6 +15,7 @@ import {
   qualityReport,
   rotate90Selection,
   SIZE,
+  unityMetadata,
 } from "../shared/pixel-core.ts";
 
 test("normalizes legacy layer projects and compact RLE pixels", () => {
@@ -147,7 +148,16 @@ test("normalizes v2 assets, animations, pivot and hitboxes", () => {
                 name: "Walk",
                 duration: 120,
                 pivot: { x: 127, y: 190 },
-                hitboxes: [{ id: "body", name: "Body", x: 100, y: 90, w: 24, h: 40 }],
+                hitboxes: [
+                  {
+                    id: "body",
+                    name: "Body hurt",
+                    x: 100,
+                    y: 90,
+                    w: 24,
+                    h: 40,
+                  },
+                ],
               },
             ],
           },
@@ -162,9 +172,12 @@ test("normalizes v2 assets, animations, pivot and hitboxes", () => {
   assert.equal(project.godot.loop, false);
   assert.equal(project.frames[0].id, "walk-1");
   assert.deepEqual(project.frames[0].pivot, { x: 127, y: 190 });
-  assert.equal(project.frames[0].hitboxes[0].name, "Body");
+  assert.equal(project.frames[0].hitboxes[0].name, "Body hurt");
+  assert.equal(project.frames[0].hitboxes[0].kind, "hurtbox");
   assert.deepEqual(project.palette, ["#abcdef"]);
   const godot = godotMetadata(project);
+  const atlas = atlasMetadata(project);
+  const unity = unityMetadata(project);
   assert.deepEqual(godot.animations[0].frame_rects[0].pivot, {
     x: 128,
     y: 128,
@@ -173,7 +186,12 @@ test("normalizes v2 assets, animations, pivot and hitboxes", () => {
     x: 127,
     y: 190,
   });
-  assert.equal(godot.animations[1].frame_rects[0].hitboxes[0].name, "Body");
+  assert.equal(godot.animations[1].frame_rects[0].hitboxes[0].name, "Body hurt");
+  assert.equal(godot.animations[1].frame_rects[0].hitboxes[0].kind, "hurtbox");
+  assert.equal(godot.animations[1].frame_rects[0].hitboxes[0].type, "hurtbox");
+  assert.equal(godot.collision[0].type, "hurtbox");
+  assert.equal(atlas.frames.walk_s_00.hitboxes[0].type, "hurtbox");
+  assert.equal(unity.frames[0].hitboxes[0].type, "hurtbox");
 });
 
 test("prompt parser honors explicit animation and direction fields", () => {
