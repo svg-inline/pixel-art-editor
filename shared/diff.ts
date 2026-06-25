@@ -246,6 +246,16 @@ export function validateProjectDiff(
         throw new Error(`diff_layer_not_found_${operation.layer?.id || ""}`);
       continue;
     }
+    if (operation.type === "frame.updated") {
+      const frame = frameById(project, operation.frameId);
+      if (!frame) throw new Error(`diff_frame_not_found_${operation.frameId}`);
+      if (
+        frame.name !== operation.before.name ||
+        frame.duration !== operation.before.duration
+      )
+        throw new Error(`diff_stale_frame_${operation.frameId}`);
+      continue;
+    }
     if (operation.type === "project.settings.changed") {
       if (operation.after.palette && operation.after.palette.length > MAX_PROJECT_COLORS)
         throw new Error(`diff_too_many_colors_${MAX_PROJECT_COLORS}`);

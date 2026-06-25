@@ -3,6 +3,7 @@ import {
   activeLayerOf,
   clone,
   compactProject,
+  drawEllipse,
   drawLine,
   drawRect,
   expandPixels,
@@ -49,18 +50,40 @@ export type LayerPatch =
       activeLayerIdAfter: string;
     };
 
+export type FramePatch = {
+  type: "frame.updated";
+  frameId: string;
+  before: {
+    name: string;
+    duration: number;
+    pivot: Project["frames"][number]["pivot"];
+    hitboxes: Project["frames"][number]["hitboxes"];
+  };
+  after: {
+    name: string;
+    duration: number;
+    pivot: Project["frames"][number]["pivot"];
+    hitboxes: Project["frames"][number]["hitboxes"];
+  };
+};
+
 export type ProjectReplacePatch = {
   type: "project.replaced";
   before: ReturnType<typeof compactProject>;
   after: ReturnType<typeof compactProject>;
 };
 
-export type HistoryPatch = PixelPatch | LayerPatch | ProjectReplacePatch;
+export type HistoryPatch =
+  | PixelPatch
+  | LayerPatch
+  | FramePatch
+  | ProjectReplacePatch;
 
 export type HistoryCommandName =
   | "setPixel"
   | "drawLine"
   | "drawRect"
+  | "drawEllipse"
   | "floodFill"
   | "layer.add"
   | "layer.remove"
@@ -172,6 +195,49 @@ function sameStructure(before: Project, after: Project) {
   return true;
 }
 
+function sameFrameTopology(before: Project, after: Project) {
+  if (before.frames.length !== after.frames.length) return false;
+  for (let i = 0; i < before.frames.length; i++) {
+    const beforeFrame = before.frames[i];
+    const afterFrame = after.frames[i];
+    if (beforeFrame.id !== afterFrame.id) return false;
+    if (beforeFrame.layers.length !== afterFrame.layers.length) return false;
+    for (let j = 0; j < beforeFrame.layers.length; j++) {
+      if (beforeFrame.layers[j].id !== afterFrame.layers[j].id) return false;
+    }
+  }
+  return true;
+}
+
+function framePatchFromFrames(
+  beforeFrame: Project["frames"][number],
+  afterFrame: Project["frames"][number],
+): FramePatch | null {
+  if (
+    beforeFrame.name === afterFrame.name &&
+    beforeFrame.duration === afterFrame.duration &&
+    JSON.stringify(beforeFrame.pivot) === JSON.stringify(afterFrame.pivot) &&
+    JSON.stringify(beforeFrame.hitboxes) === JSON.stringify(afterFrame.hitboxes)
+  )
+    return null;
+  return {
+    type: "frame.updated",
+    frameId: beforeFrame.id,
+    before: {
+      name: beforeFrame.name,
+      duration: beforeFrame.duration,
+      pivot: clone(beforeFrame.pivot),
+      hitboxes: clone(beforeFrame.hitboxes),
+    },
+    after: {
+      name: afterFrame.name,
+      duration: afterFrame.duration,
+      pivot: clone(afterFrame.pivot),
+      hitboxes: clone(afterFrame.hitboxes),
+    },
+  };
+}
+
 export function createProjectCommand(
   beforeInput: unknown,
   afterInput: unknown,
@@ -197,6 +263,13 @@ export function createProjectCommand(
         );
         if (patch) patches.push(patch);
       }
+    }
+  } else if (sameFrameTopology(before, after)) {
+    for (const beforeFrame of before.frames) {
+      const afterFrame = after.frames.find((frame) => frame.id === beforeFrame.id);
+      if (!afterFrame) continue;
+      const patch = framePatchFromFrames(beforeFrame, afterFrame);
+      if (patch) patches.push(patch);
     }
   } else {
     patches.push({
@@ -298,6 +371,36 @@ export function createDrawRectCommand(
   );
 }
 
+export function createDrawEllipseCommand(
+  projectInput: unknown,
+  x: number,
+  y: number,
+  rx: number,
+  ry: number,
+  color: Pixel,
+  frameId?: string,
+  layerId?: string,
+  source?: string,
+) {
+  const before = expandProject(projectInput);
+  const after = expandProject(before);
+  const frame = frameId ? getFrame(after, frameId) : activeFrameOf(after);
+  const layer = layerId
+    ? frame?.layers.find((l) => l.id === layerId)
+    : frame
+      ? activeLayerOf(frame)
+      : null;
+  if (!frame || !layer) return null;
+  drawEllipse(layer, x, y, rx, ry, color);
+  return createProjectCommand(
+    before,
+    after,
+    "drawEllipse",
+    { x, y, rx, ry, color, frameId: frame.id, layerId: layer.id },
+    source,
+  );
+}
+
 export function createFloodFillCommand(
   projectInput: unknown,
   x: number,
@@ -362,6 +465,15 @@ export function applyPatch(projectInput: unknown, patch: HistoryPatch): Project 
     frame.layers = frame.layers.filter((layer) => layer.id !== patch.layer.id);
     frame.activeLayerId = patch.activeLayerIdAfter;
   }
+  if (patch.type === "frame.updated") {
+    const frame = getFrame(project, patch.frameId);
+    if (!frame) return project;
+    frame.name = patch.after.name;
+    frame.duration = patch.after.duration;
+    frame.pivot = clone(patch.after.pivot);
+    frame.hitboxes = clone(patch.after.hitboxes);
+    return expandProject(project);
+  }
   return expandProject(project);
 }
 
@@ -386,6 +498,15 @@ export function revertPatch(projectInput: unknown, patch: HistoryPatch): Project
     if (!frame) return project;
     frame.layers.splice(patch.index, 0, clone(patch.layer));
     frame.activeLayerId = patch.activeLayerIdBefore;
+  }
+  if (patch.type === "frame.updated") {
+    const frame = getFrame(project, patch.frameId);
+    if (!frame) return project;
+    frame.name = patch.before.name;
+    frame.duration = patch.before.duration;
+    frame.pivot = clone(patch.before.pivot);
+    frame.hitboxes = clone(patch.before.hitboxes);
+    return expandProject(project);
   }
   return expandProject(project);
 }

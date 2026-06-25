@@ -146,16 +146,23 @@ canvas {
 .layer input,
 .frame input {
   margin: 3px 0;
+  min-width: 0;
 }
 .frame {
   display: grid;
-  grid-template-columns: 24px 1fr auto auto auto;
+  grid-template-columns: 48px 24px 1fr 70px auto auto auto;
   gap: 4px;
   align-items: center;
 }
 .frame span {
   font-weight: bold;
   color: #93c5fd;
+}
+.frame-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  cursor: pointer;
 }
 .palette,
 .used {
@@ -185,6 +192,32 @@ canvas {
 .grid-buttons button {
   margin: 0;
   padding: 7px 4px;
+}
+.two-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.game-data {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 8px;
+  background: #0f172a;
+}
+.box-row {
+  display: grid;
+  grid-template-columns: 1fr repeat(4, 48px) auto;
+  gap: 4px;
+  align-items: center;
+  border-top: 1px solid #1f2937;
+  padding-top: 6px;
+  margin-top: 6px;
+}
+.box-row input {
+  min-width: 0;
+}
+.box-row button {
+  margin: 0;
 }
 .qa {
   padding: 8px;

@@ -9,6 +9,7 @@ import {
 } from "../shared/pixel-core.ts";
 import {
   applyCommand,
+  createDrawEllipseCommand,
   createDrawRectCommand,
   createProjectCommand,
   createSetPixelCommand,
@@ -66,6 +67,24 @@ test("drawRect command records a compact pixel patch", () => {
   }
 });
 
+test("drawEllipse command records a compact pixel patch", () => {
+  const before = expandProject({});
+  const command = createDrawEllipseCommand(before, 8, 8, 3, 2, "#111827");
+
+  assert.ok(command);
+  assert.equal(command.command.type, "drawEllipse");
+  assert.equal(command.patches.length, 1);
+  assert.equal(command.patches[0].type, "pixels.changed");
+  if (command.patches[0].type === "pixels.changed") {
+    assert.ok(command.patches[0].changes.length > 0);
+  }
+
+  const after = applyCommand(before, command);
+  assert.ok(
+    expandPixels(activeLayerOf(activeFrameOf(after)).pixels).some(Boolean),
+  );
+});
+
 test("100 small pixel edits do not persist project snapshots", () => {
   const before = expandProject({});
   const after = expandProject(before);
@@ -81,6 +100,64 @@ test("100 small pixel edits do not persist project snapshots", () => {
   assert.equal(command.patches[0].type, "pixels.changed");
   assert.equal(JSON.stringify(command).includes("project.replaced"), false);
   assert.ok(JSON.stringify(command).length < 9000);
+});
+
+test("frame name and duration changes are stored as frame patch", () => {
+  const before = expandProject({});
+  const after = expandProject(before);
+  const frame = activeFrameOf(after);
+  frame.name = "Anticipation";
+  frame.duration = 240;
+
+  const command = createProjectCommand(
+    before,
+    after,
+    "project.change",
+    { operation: "frame.update" },
+    "test",
+  );
+
+  assert.ok(command);
+  assert.equal(command.patches.length, 1);
+  assert.equal(command.patches[0].type, "frame.updated");
+  assert.equal(JSON.stringify(command).includes("project.replaced"), false);
+
+  const applied = applyCommand(before, command);
+  assert.equal(activeFrameOf(applied).name, "Anticipation");
+  assert.equal(activeFrameOf(applied).duration, 240);
+
+  const reverted = revertCommand(applied, command);
+  assert.equal(activeFrameOf(reverted).name, activeFrameOf(before).name);
+  assert.equal(activeFrameOf(reverted).duration, activeFrameOf(before).duration);
+});
+
+test("frame pivot and hitbox changes are stored as frame patch", () => {
+  const before = expandProject({});
+  const after = expandProject(before);
+  const frame = activeFrameOf(after);
+  frame.pivot = { x: 96, y: 144 };
+  frame.hitboxes.push({ id: "box-1", name: "hitbox", x: 10, y: 20, w: 30, h: 40 });
+
+  const command = createProjectCommand(
+    before,
+    after,
+    "project.change",
+    { operation: "frame.gameData" },
+    "test",
+  );
+
+  assert.ok(command);
+  assert.equal(command.patches.length, 1);
+  assert.equal(command.patches[0].type, "frame.updated");
+  assert.equal(JSON.stringify(command).includes("project.replaced"), false);
+
+  const applied = applyCommand(before, command);
+  assert.deepEqual(activeFrameOf(applied).pivot, { x: 96, y: 144 });
+  assert.equal(activeFrameOf(applied).hitboxes[0].name, "hitbox");
+
+  const reverted = revertCommand(applied, command);
+  assert.deepEqual(activeFrameOf(reverted).pivot, activeFrameOf(before).pivot);
+  assert.equal(activeFrameOf(reverted).hitboxes.length, 0);
 });
 
 test("legacy snapshot history entries are not accepted as commands", () => {

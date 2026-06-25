@@ -14,6 +14,9 @@ import {
   colorsUsed,
   compactProject,
   DIRECTIONS,
+  drawEllipse,
+  drawLine,
+  drawRect,
   expandPixels,
   generatePixelArtFromPrompt,
   godotMetadata,
@@ -55,7 +58,16 @@ import {
 } from "./canvas-renderer.ts";
 import "./style.css";
 
-type Tool = "pencil" | "eraser" | "bucket" | "picker" | "select" | "dither";
+type Tool =
+  | "pencil"
+  | "eraser"
+  | "bucket"
+  | "picker"
+  | "select"
+  | "dither"
+  | "line"
+  | "rect"
+  | "ellipse";
 type AiOperation = "generate" | "edit_selection" | "edit" | "create_variation";
 type GridMode = "auto" | "manual";
 type GridDensity = "compacta" | "normal" | "limpa";
@@ -113,6 +125,13 @@ type RemoteHistoryItem = {
   patches: number;
   pixelChanges: number;
   params?: Record<string, unknown>;
+};
+type BoxKind = "hitbox" | "hurtbox" | "attackbox";
+type ShapeTool = Extract<Tool, "line" | "rect" | "ellipse">;
+type ShapePreviewState = {
+  tool: ShapeTool;
+  start: Point;
+  end: Point;
 };
 
 const DEFAULT_ZOOM = 3;
@@ -289,6 +308,27 @@ function eraseClipPixels(layer: Layer, clip: Clip) {
         pixels[idx(tx, ty)] = null;
     }
 }
+function FrameThumbnail({
+  frame,
+  background,
+}: {
+  frame: Frame;
+  background: ProjectBackground;
+}) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    canvas.width = 48;
+    canvas.height = 48;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(renderFrameFresh(frame, background), 0, 0, 48, 48);
+  }, [frame, background]);
+  return <canvas className="frame-thumb" ref={ref} />;
+}
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -299,6 +339,8 @@ function App() {
   const previewRafRef = useRef<number | null>(null);
   const drawingRef = useRef(false);
   const strokeBeforeRef = useRef<Project | null>(null);
+  const shapeStartRef = useRef<Point | null>(null);
+  const lastCellRef = useRef<Point | null>(null);
   const lastBridgeSave = useRef(0);
   const lastRenderStatsUpdateRef = useRef(0);
   const [project, setProject] = useState<Project>(() =>
@@ -319,10 +361,16 @@ function App() {
   const [gridMajorStep, setGridMajorStep] = useState(32);
   const [paintGridCell, setPaintGridCell] = useState(true);
   const [showOnion, setShowOnion] = useState(true);
+  const [showNextOnion, setShowNextOnion] = useState(true);
+  const [onionPrevOpacity, setOnionPrevOpacity] = useState(25);
+  const [onionNextOpacity, setOnionNextOpacity] = useState(18);
   const [history, setHistory] = useState<HistoryCommand[]>([]);
   const [redo, setRedo] = useState<HistoryCommand[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectionStart, setSelectionStart] = useState<Point | null>(null);
+  const [shapePreview, setShapePreview] = useState<ShapePreviewState | null>(
+    null,
+  );
   const [clipboard, setClipboard] = useState<Clip | null>(null);
   const [prompt, setPrompt] = useState("crie personagem idle oeste");
   const [aiOperation, setAiOperation] = useState<AiOperation>("generate");
@@ -379,11 +427,15 @@ function App() {
     showGrid,
     showOnion,
     selection,
+    shapePreview,
     gridMode,
     gridDensity,
     gridStep,
     gridOpacity,
     gridMajorStep,
+    onionPrevOpacity,
+    onionNextOpacity,
+    showNextOnion,
     effectiveGridStep,
   ]);
   useEffect(() => {
@@ -407,14 +459,27 @@ function App() {
     return () => clearTimeout(timeout);
   }, [project, dirty]);
   useEffect(() => {
-    const ms = Math.max(30, 1000 / Number(project.godot?.fps || 6));
-    const t = setInterval(
-      () =>
-        setPreviewFrame((v) => (v + 1) % Math.max(1, project.frames.length)),
-      ms,
+    const currentFrame = project.frames[previewFrame] || project.frames[0];
+    const ms = clamp(Number(currentFrame?.duration || 1000 / Number(activeAnimation.fps || 6)), 30, 5000);
+    const t = setTimeout(() => {
+      setPreviewFrame((value) => {
+        const last = Math.max(0, project.frames.length - 1);
+        if (value >= last) return activeAnimation.loop ? 0 : last;
+        return value + 1;
+      });
+    }, ms);
+    return () => clearTimeout(t);
+  }, [
+    activeAnimation.fps,
+    activeAnimation.loop,
+    project.frames,
+    previewFrame,
+  ]);
+  useEffect(() => {
+    setPreviewFrame((value) =>
+      Math.min(value, Math.max(0, project.frames.length - 1)),
     );
-    return () => clearInterval(t);
-  }, [project.frames.length, project.godot?.fps]);
+  }, [project.activeAnimationId, project.frames.length]);
   useEffect(() => {
     previewStateRef.current = aiPreview;
     renderAiPreview();
@@ -460,6 +525,54 @@ function App() {
     }
     return () => es?.close?.();
   }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT"
+      )
+        return;
+      if (event.ctrlKey && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        undo();
+        return;
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redoAction();
+        return;
+      }
+      const keyTools: Record<string, Tool> = {
+        b: "pencil",
+        e: "eraser",
+        g: "bucket",
+        i: "picker",
+        m: "select",
+        d: "dither",
+        l: "line",
+        r: "rect",
+        o: "ellipse",
+      };
+      const nextTool = keyTools[event.key.toLowerCase()];
+      if (nextTool) {
+        event.preventDefault();
+        setTool(nextTool);
+        return;
+      }
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        setZoom((value) => clamp(value + 1, 1, 8));
+      }
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        setZoom((value) => clamp(value - 1, 1, 8));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [history, redo]);
   useEffect(() => {
     void loadMcpPreviews();
     void loadRemoteHistory();
@@ -641,6 +754,66 @@ function App() {
     if (gridMajorStep > step) drawLines(gridMajorStep, major);
     ctx.restore();
   }
+  function drawRectOverlay(
+    ctx: CanvasRenderingContext2D,
+    rect: Selection,
+    strokeStyle: string,
+  ) {
+    const b = selectionBounds(rect);
+    if (!b) return;
+    ctx.save();
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(
+      b.x * zoom + 0.5,
+      b.y * zoom + 0.5,
+      b.w * zoom,
+      b.h * zoom,
+    );
+    ctx.restore();
+  }
+  function drawShapeOverlay(ctx: CanvasRenderingContext2D) {
+    if (!shapePreview) return;
+    const { tool: previewTool, start, end } = shapePreview;
+    const b = selectionBounds({
+      x: start.x,
+      y: start.y,
+      w: end.x - start.x,
+      h: end.y - start.y,
+    });
+    if (!b) return;
+    ctx.save();
+    ctx.strokeStyle = "#facc15";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    if (previewTool === "line") {
+      ctx.beginPath();
+      ctx.moveTo(start.x * zoom + zoom / 2, start.y * zoom + zoom / 2);
+      ctx.lineTo(end.x * zoom + zoom / 2, end.y * zoom + zoom / 2);
+      ctx.stroke();
+    } else if (previewTool === "ellipse") {
+      ctx.beginPath();
+      ctx.ellipse(
+        (b.x + b.w / 2) * zoom,
+        (b.y + b.h / 2) * zoom,
+        Math.max(zoom / 2, (b.w * zoom) / 2),
+        Math.max(zoom / 2, (b.h * zoom) / 2),
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(
+        b.x * zoom + 0.5,
+        b.y * zoom + 0.5,
+        b.w * zoom,
+        b.h * zoom,
+      );
+    }
+    ctx.restore();
+  }
   function renderCanvas() {
     const c = canvasRef.current;
     if (!c) return;
@@ -654,24 +827,18 @@ function App() {
     ctx.imageSmoothingEnabled = false;
     fillBackground(ctx, project.background, zoom);
     if (showOnion && frameIndex > 0)
-      drawFrame(ctx, project.frames[frameIndex - 1], zoom, 0.25);
+      drawFrame(ctx, project.frames[frameIndex - 1], zoom, onionPrevOpacity / 100);
     drawFrame(ctx, frame, zoom, 1);
+    if (showOnion && showNextOnion && frameIndex < project.frames.length - 1)
+      drawFrame(
+        ctx,
+        project.frames[frameIndex + 1],
+        zoom,
+        onionNextOpacity / 100,
+      );
     drawDynamicGrid(ctx);
-    if (selection) {
-      const b = selectionBounds(selection);
-      if (b) {
-        ctx.strokeStyle = "#60a5fa";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.strokeRect(
-          b.x * zoom + 0.5,
-          b.y * zoom + 0.5,
-          b.w * zoom,
-          b.h * zoom,
-        );
-        ctx.setLineDash([]);
-      }
-    }
+    if (selection) drawRectOverlay(ctx, selection, "#60a5fa");
+    drawShapeOverlay(ctx);
     const now = performance.now();
     if (now - lastRenderStatsUpdateRef.current > 1000) {
       lastRenderStatsUpdateRef.current = now;
@@ -807,11 +974,61 @@ function App() {
     projectRef.current = next;
     setProject(next);
   }
+  function isShapeTool(value: Tool): value is ShapeTool {
+    return value === "line" || value === "rect" || value === "ellipse";
+  }
+  function boundsFromPoints(start: Point, end: Point) {
+    return {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      w: Math.abs(end.x - start.x) + 1,
+      h: Math.abs(end.y - start.y) + 1,
+    };
+  }
+  function applyShapeTool(start: Point, end: Point) {
+    const shapeTool = tool;
+    updateProject(
+      (p) => {
+        const layer = activeLayerOf(activeFrameOf(p));
+        if (shapeTool === "line") {
+          drawLine(layer, start.x, start.y, end.x, end.y, color, 1);
+          return;
+        }
+        const b = boundsFromPoints(start, end);
+        if (shapeTool === "rect") {
+          drawRect(layer, b.x, b.y, b.w, b.h, color);
+          return;
+        }
+        const rx = Math.max(1, Math.floor(b.w / 2));
+        const ry = Math.max(1, Math.floor(b.h / 2));
+        drawEllipse(layer, b.x + rx, b.y + ry, rx, ry, color);
+      },
+      true,
+      shapeTool === "line"
+        ? "drawLine"
+        : shapeTool === "rect"
+          ? "drawRect"
+          : "drawEllipse",
+      {
+        tool: shapeTool,
+        color,
+        from: start,
+        to: end,
+      },
+    );
+  }
   function onMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
     const p = getCell(e);
+    lastCellRef.current = p;
     if (tool === "select") {
       setSelectionStart(p);
       setSelection({ ...p, w: 0, h: 0 });
+      return;
+    }
+    if (isShapeTool(tool)) {
+      shapeStartRef.current = p;
+      setShapePreview({ tool, start: p, end: p });
+      drawingRef.current = true;
       return;
     }
     strokeBeforeRef.current = cloneProject(projectRef.current);
@@ -820,6 +1037,7 @@ function App() {
   }
   function onMouseMove(e: ReactMouseEvent<HTMLCanvasElement>) {
     const p = getCell(e);
+    lastCellRef.current = p;
     if (tool === "select" && selectionStart) {
       setSelection({
         x: selectionStart.x,
@@ -829,9 +1047,21 @@ function App() {
       });
       return;
     }
+    if (drawingRef.current && isShapeTool(tool) && shapeStartRef.current) {
+      setShapePreview({ tool, start: shapeStartRef.current, end: p });
+      return;
+    }
     if (drawingRef.current && e.buttons === 1) editAt(p.x, p.y);
   }
-  function onMouseUp() {
+  function onMouseUp(e?: ReactMouseEvent<HTMLCanvasElement>) {
+    if (e) lastCellRef.current = getCell(e);
+    if (drawingRef.current && isShapeTool(tool) && shapeStartRef.current) {
+      applyShapeTool(shapeStartRef.current, lastCellRef.current || shapeStartRef.current);
+      shapeStartRef.current = null;
+      setShapePreview(null);
+      drawingRef.current = false;
+      return;
+    }
     if (drawingRef.current) {
       const type =
         tool === "bucket"
@@ -880,6 +1110,23 @@ function App() {
       const f = activeFrameOf(p);
       mutator(f.layers[i]);
     }, false);
+  }
+  function updateActiveFrame(mutator: (frame: Frame) => void) {
+    updateProject((p) => {
+      mutator(activeFrameOf(p));
+    });
+  }
+  function addFrameBox(kind: BoxKind) {
+    updateActiveFrame((frame) => {
+      frame.hitboxes.push({
+        id: uid(),
+        name: kind,
+        x: Math.max(0, Math.floor(frame.pivot.x) - 16),
+        y: Math.max(0, Math.floor(frame.pivot.y) - 16),
+        w: 32,
+        h: 32,
+      });
+    });
   }
   function setActiveAsset(id: string) {
     updateProject((p) => {
@@ -1370,17 +1617,25 @@ function App() {
           ))}
         </div>
         <div className="tools">
-          {["pencil", "eraser", "bucket", "picker", "select", "dither"].map(
-            (t) => (
+          {[
+            "pencil",
+            "eraser",
+            "bucket",
+            "picker",
+            "select",
+            "dither",
+            "line",
+            "rect",
+            "ellipse",
+          ].map((t) => (
               <button
                 key={t}
                 className={tool === t ? "active" : ""}
-                onClick={() => setTool(t)}
+                onClick={() => setTool(t as Tool)}
               >
                 {t}
               </button>
-            ),
-          )}
+            ))}
         </div>
         <label>
           Zoom{" "}
@@ -1485,6 +1740,41 @@ function App() {
           />{" "}
           onion skin
         </label>
+        <div className="grid-settings">
+          <label>
+            Anterior{" "}
+            <input
+              type="range"
+              min="0"
+              max="80"
+              value={onionPrevOpacity}
+              disabled={!showOnion}
+              onChange={(e) => setOnionPrevOpacity(+e.target.value)}
+            />{" "}
+            {onionPrevOpacity}%
+          </label>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={showNextOnion}
+              disabled={!showOnion}
+              onChange={(e) => setShowNextOnion(e.target.checked)}
+            />{" "}
+            próximo frame
+          </label>
+          <label>
+            Próximo{" "}
+            <input
+              type="range"
+              min="0"
+              max="80"
+              value={onionNextOpacity}
+              disabled={!showOnion || !showNextOnion}
+              onChange={(e) => setOnionNextOpacity(+e.target.value)}
+            />{" "}
+            {onionNextOpacity}%
+          </label>
+        </div>
 
         <h2>Fundo</h2>
         <label>
@@ -1702,6 +1992,13 @@ function App() {
       <aside className="panel right">
         <h2>Preview animado</h2>
         <canvas className="preview" ref={previewRef} />
+        <div className="status">
+          {activeAnimation.name} · {activeAnimation.direction} · frame{" "}
+          {Math.min(previewFrame + 1, project.frames.length)}/
+          {project.frames.length} ·{" "}
+          {project.frames[previewFrame]?.duration || 0}ms
+          {activeAnimation.loop ? " · loop" : " · sem loop"}
+        </div>
         <div className="timeline">
           <button onClick={addFrame}>+ frame</button>
           <button onClick={duplicateFrame}>duplicar</button>
@@ -1717,6 +2014,7 @@ function App() {
                 }, false)
               }
             >
+              <FrameThumbnail frame={fr} background={project.background} />
               <span>{i + 1}</span>
               <input
                 value={fr.name}
@@ -1724,6 +2022,19 @@ function App() {
                   updateProject((p) => {
                     p.frames[i].name = e.target.value;
                   }, false)
+                }
+              />
+              <input
+                type="number"
+                min="1"
+                max="5000"
+                value={fr.duration}
+                title="Duração em ms"
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) =>
+                  updateProject((p) => {
+                    p.frames[i].duration = clamp(+e.target.value || 1, 1, 5000);
+                  })
                 }
               />
               <button
@@ -1747,6 +2058,85 @@ function App() {
                   e.stopPropagation();
                   removeFrame(fr.id);
                 }}
+              >
+                x
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <h2>Game data</h2>
+        <div className="game-data">
+          <div className="two-cols">
+            <label>
+              Pivot X{" "}
+              <input
+                type="number"
+                min="0"
+                max={SIZE - 1}
+                value={frame.pivot.x}
+                onChange={(e) =>
+                  updateActiveFrame((fr) => {
+                    fr.pivot.x = clamp(+e.target.value || 0, 0, SIZE - 1);
+                  })
+                }
+              />
+            </label>
+            <label>
+              Pivot Y{" "}
+              <input
+                type="number"
+                min="0"
+                max={SIZE - 1}
+                value={frame.pivot.y}
+                onChange={(e) =>
+                  updateActiveFrame((fr) => {
+                    fr.pivot.y = clamp(+e.target.value || 0, 0, SIZE - 1);
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="grid-buttons">
+            <button onClick={() => addFrameBox("hitbox")}>+ hitbox</button>
+            <button onClick={() => addFrameBox("hurtbox")}>+ hurtbox</button>
+            <button onClick={() => addFrameBox("attackbox")}>+ attackbox</button>
+          </div>
+          {frame.hitboxes.map((box, i) => (
+            <div className="box-row" key={box.id}>
+              <input
+                value={box.name}
+                onChange={(e) =>
+                  updateActiveFrame((fr) => {
+                    fr.hitboxes[i].name = e.target.value;
+                  })
+                }
+              />
+              {(["x", "y", "w", "h"] as const).map((field) => (
+                <input
+                  key={field}
+                  type="number"
+                  min={field === "w" || field === "h" ? 1 : 0}
+                  max={SIZE}
+                  value={box[field]}
+                  title={field}
+                  onChange={(e) =>
+                    updateActiveFrame((fr) => {
+                      fr.hitboxes[i][field] = clamp(
+                        +e.target.value || (field === "w" || field === "h" ? 1 : 0),
+                        field === "w" || field === "h" ? 1 : 0,
+                        SIZE,
+                      );
+                    })
+                  }
+                />
+              ))}
+              <button
+                onClick={() =>
+                  updateActiveFrame((fr) => {
+                    fr.hitboxes = fr.hitboxes.filter((item) => item.id !== box.id);
+                  })
+                }
               >
                 x
               </button>

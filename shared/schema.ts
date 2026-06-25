@@ -38,6 +38,23 @@ export const LayerRemovedOperationSchema = z.object({
   activeLayerIdAfter: z.string(),
 });
 
+export const FrameUpdatedOperationSchema = z.object({
+  type: z.literal("frame.updated"),
+  frameId: z.string().min(1),
+  before: z.object({
+    name: z.string(),
+    duration: z.number().int().min(1).max(5000),
+    pivot: z.any().optional(),
+    hitboxes: z.array(z.any()).optional(),
+  }),
+  after: z.object({
+    name: z.string(),
+    duration: z.number().int().min(1).max(5000),
+    pivot: z.any().optional(),
+    hitboxes: z.array(z.any()).optional(),
+  }),
+});
+
 export const ProjectReplacedOperationSchema = z.object({
   type: z.literal("project.replaced"),
   before: z.any(),
@@ -77,6 +94,7 @@ export const ProjectDiffOperationSchema = z.discriminatedUnion("type", [
   PixelsChangedOperationSchema,
   LayerAddedOperationSchema,
   LayerRemovedOperationSchema,
+  FrameUpdatedOperationSchema,
   ProjectSettingsChangedOperationSchema,
   FramesReplacedOperationSchema,
   AssetAnimationsReplacedOperationSchema,
