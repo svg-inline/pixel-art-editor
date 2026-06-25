@@ -6,7 +6,9 @@
       "args": ["tsx", "server/mcp-server.ts"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "PIXEL_PROJECT_PATH": "./pixel-project.mcp.json"
+        "PIXEL_PROJECT_PATH": "./runtime/pixel-project.mcp.json",
+        "PIXEL_DB_PATH": "./runtime/pixel-art-db.json",
+        "PIXEL_SQLITE_PATH": "./runtime/editor.sqlite"
       }
     }
   }

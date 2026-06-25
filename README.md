@@ -10,6 +10,24 @@ Gerenciador oficial: npm. O lockfile versionado é `package-lock.json`; não use
 npm ci
 ```
 
+## Build e pacote limpo
+
+O build web é gerado localmente em `dist/` por Vite:
+
+```bash
+npm run build
+```
+
+`dist/` é artefato de build e não deve ser commitado. Em deploys, prefira gerar o build no CI ou no ambiente de entrega.
+
+Para gerar um ZIP de distribuição sem `.git/`, `node_modules/`, `dist/`, bancos locais, backups, exports ou arquivos temporários:
+
+```bash
+npm run pack:clean
+```
+
+O arquivo final é criado em `release/pixel-art-mcp-<versao>.zip`. A pasta `release/` e arquivos `.zip` são ignorados pelo Git.
+
 ## Rodar editor com integração em tempo real
 
 ```bash
@@ -56,6 +74,8 @@ Por padrão, a bridge e o MCP gravam dados locais em `runtime/`:
 - `runtime/backups/`: backups criados antes de migrações ou resets.
 
 Esses arquivos são gerados em runtime e não entram no Git. Se arquivos legados existirem na raiz (`pixel-project.mcp.json` ou `pixel-art-db.json`), a bridge/MCP os migram para `runtime/` na primeira execução e criam backup antes de mover.
+
+Também são runtime local e não devem ser commitados: bancos `*.sqlite`, arquivos WAL/SHM, JSONs de projeto/db dentro de `runtime/`, `runtime/backups/`, `runtime/exports/`, `.env`, `dist/`, `node_modules/` e pacotes `.zip` gerados.
 
 Comandos úteis:
 

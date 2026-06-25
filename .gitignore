@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release/
 .env
 # npm is the official package manager; keep package-lock.json versioned.
 yarn.lock
@@ -7,13 +8,25 @@ pnpm-lock.yaml
 bun.lock
 bun.lockb
 runtime/*
+runtime/*.sqlite
+runtime/*.sqlite-wal
+runtime/*.sqlite-shm
+runtime/*.json
+runtime/backups/
+runtime/exports/
 !runtime/.gitkeep
 !runtime/README.md
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
 pixel-project.mcp.json
 pixel-art-db.json
 *.tmp
+*.temp
+*.log
+*.bak
 .DS_Store
 **/*.zip
