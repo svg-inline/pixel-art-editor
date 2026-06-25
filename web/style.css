@@ -234,3 +234,40 @@ canvas {
   margin: 0 0 8px;
   image-rendering: pixelated;
 }
+.history-list {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 6px;
+  margin: 8px 0;
+  background: #0f172a;
+}
+.history-list .status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.history-list .status button {
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.history-item {
+  display: grid;
+  gap: 3px;
+  border-top: 1px solid #1f2937;
+  padding: 7px 0;
+  font-size: 12px;
+}
+.history-item:first-of-type {
+  border-top: 0;
+}
+.history-item span,
+.history-item small {
+  color: #94a3b8;
+}
+.history-item em {
+  color: #cbd5e1;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}

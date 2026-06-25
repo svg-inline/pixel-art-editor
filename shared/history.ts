@@ -69,7 +69,8 @@ export type HistoryCommandName =
   | "frame.duplicate"
   | "frame.move"
   | "project.replace"
-  | "project.change";
+  | "project.change"
+  | "mcp.diff";
 
 export type HistoryCommand = {
   id: string;

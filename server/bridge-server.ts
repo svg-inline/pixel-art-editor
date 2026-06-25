@@ -29,6 +29,15 @@ import {
   type HistoryCommandName,
 } from "../shared/history.ts";
 import {
+  applyProjectDiff,
+  createProjectDiff,
+  previewProjectDiff,
+} from "../shared/diff.ts";
+import {
+  ProjectDiffSchema,
+  type ProjectDiff,
+} from "../shared/schema.ts";
+import {
   AiOperationSchema,
   createAiProvider,
   type AiOperation,
@@ -102,6 +111,7 @@ type AiPreview = {
   provider: string;
   providerKind: "local" | "http";
   model?: string;
+  diff: ProjectDiff;
   project: ReturnType<typeof compactProject>;
 };
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
@@ -120,6 +130,12 @@ const ProjectPostSchema = z
     revision: z.number().int().nonnegative().optional(),
     source: z.string().optional(),
     addHistory: z.boolean().optional(),
+  })
+  .passthrough();
+const DiffPreviewPostSchema = z
+  .object({
+    diff: ProjectDiffSchema,
+    source: z.string().optional(),
   })
   .passthrough();
 const AiPromptSchema = z
@@ -488,8 +504,20 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/ai-preview" && req.method === "POST") {
       const data = parseBody(await body(req), AiPromptSchema);
+      const baseProject = expandProject(data.project || readProject());
       const result = await runAiPrompt(data);
-      const preview: AiPreview = {
+      const diff = createProjectDiff(baseProject, result.project, {
+        source: "bridge",
+        tool: "ai-preview",
+        prompt: data.prompt,
+        params: aiHistoryParams(result, {
+          prompt: data.prompt,
+          operation: (data.operation || "generate") as AiOperation,
+        }),
+      });
+      if (!diff) return json(req, res, 400, { error: "empty_diff" });
+      const diffPreview = previewProjectDiff(baseProject, diff);
+      const aiPreview: AiPreview = {
         id: id(),
         at: new Date().toISOString(),
         baseRevision: expectedRevisionFrom(data) ?? readProject().revision,
@@ -498,12 +526,14 @@ const server = http.createServer(async (req, res) => {
         provider: result.provider,
         providerKind: result.providerKind,
         model: result.model,
-        project: compactProject(result.project),
+        diff,
+        project: compactProject(diffPreview.project),
       };
-      aiPreviews.set(preview.id, preview);
+      aiPreviews.set(aiPreview.id, aiPreview);
       return json(req, res, 200, {
-        ...preview,
-        project: result.project,
+        ...aiPreview,
+        project: diffPreview.project,
+        summary: diffPreview.summary,
       });
     }
     if (
@@ -516,16 +546,22 @@ const server = http.createServer(async (req, res) => {
       if (!preview)
         return json(req, res, 404, { error: "ai_preview_not_found" });
       const data = parseBody(await body(req), ProjectPostSchema);
-      const saved = await writeProject(preview.project, {
+      const current = readProject();
+      const saved = await writeProject(applyProjectDiff(current, preview.diff), {
         expectedRevision: expectedRevisionFrom(data) ?? preview.baseRevision,
+        historyType: "mcp.diff",
         historyParams: {
+          tool: "ai-preview",
           operation: preview.operation,
           prompt: preview.prompt,
           provider: preview.provider,
           providerKind: preview.providerKind,
           model: preview.model,
           previewId: preview.id,
+          timestamp: preview.at,
+          diff: preview.diff,
         },
+        historySource: "bridge",
       });
       aiPreviews.delete(preview.id);
       return json(req, res, 200, saved);
@@ -536,6 +572,54 @@ const server = http.createServer(async (req, res) => {
     ) {
       const previewId = url.pathname.split("/").pop() || "";
       const existed = aiPreviews.delete(previewId);
+      return json(req, res, existed ? 200 : 404, { ok: existed });
+    }
+    if (url.pathname === "/api/diff-preview" && req.method === "POST") {
+      const data = parseBody(await body(req), DiffPreviewPostSchema);
+      const pending = repository.addPendingDiff({
+        diff: data.diff,
+        source: data.source || data.diff.command?.source || "bridge",
+        command: data.diff.command,
+      });
+      return json(req, res, 200, pending);
+    }
+    if (url.pathname === "/api/mcp-previews" && req.method === "GET") {
+      return json(req, res, 200, repository.listPendingDiffs());
+    }
+    if (
+      url.pathname.startsWith("/api/mcp-preview/") &&
+      url.pathname.endsWith("/accept") &&
+      req.method === "POST"
+    ) {
+      const previewId = url.pathname.split("/").at(-2) || "";
+      const pending = repository.getPendingDiff(previewId);
+      if (!pending)
+        return json(req, res, 404, { error: "mcp_preview_not_found" });
+      const data = parseBody(await body(req), ProjectPostSchema);
+      const current = readProject();
+      const saved = await writeProject(applyProjectDiff(current, pending.diff), {
+        expectedRevision: expectedRevisionFrom(data) ?? pending.diff.baseRevision,
+        historyType: "mcp.diff",
+        historyParams: {
+          ...(pending.command?.params || {}),
+          tool: pending.command?.tool || "mcp",
+          prompt: pending.command?.prompt,
+          timestamp: pending.command?.timestamp || pending.at,
+          previewId: pending.id,
+          diff: pending.diff,
+          summary: pending.summary,
+        },
+        historySource: pending.source || "mcp",
+      });
+      repository.deletePendingDiff(previewId);
+      return json(req, res, 200, saved);
+    }
+    if (
+      url.pathname.startsWith("/api/mcp-preview/") &&
+      req.method === "DELETE"
+    ) {
+      const previewId = url.pathname.split("/").pop() || "";
+      const existed = repository.deletePendingDiff(previewId);
       return json(req, res, existed ? 200 : 404, { ok: existed });
     }
     if (url.pathname === "/api/tools/edit-selection" && req.method === "POST") {
@@ -748,6 +832,12 @@ const server = http.createServer(async (req, res) => {
                 : sum,
             0,
           ),
+          source: h.command.source,
+          params: h.command.params || {},
+          diff: h.command.params?.diff,
+          tool: h.command.params?.tool,
+          prompt: h.command.params?.prompt,
+          timestamp: h.command.params?.timestamp || h.at,
         })),
       );
     }

@@ -42,6 +42,12 @@ import {
 import {
   type HistoryCommandName,
 } from "../shared/history.ts";
+import {
+  createProjectDiff,
+  previewProjectDiff,
+  type ProjectDiffSummary,
+} from "../shared/diff.ts";
+import type { ProjectDiff } from "../shared/schema.ts";
 import { createAiProvider, type AiOperation } from "./ai/provider.ts";
 import { ProjectRepository } from "./db.ts";
 import { encodePngRgba } from "./png.ts";
@@ -69,11 +75,51 @@ const repository = new ProjectRepository(sqlitePath, {
 });
 
 let project: Project = repository.getProject();
+let lastProposal:
+  | {
+      previewId: string;
+      diff: ProjectDiff;
+      summary: ProjectDiffSummary;
+    }
+  | null = null;
 function reload() {
   project = repository.getProject();
   return project;
 }
 function save(
+  historyType: HistoryCommandName = "project.change",
+  params?: Record<string, unknown>,
+) {
+  const before = repository.getProject();
+  const tool = String(params?.operation || historyType);
+  const prompt = typeof params?.prompt === "string" ? params.prompt : undefined;
+  const diff = createProjectDiff(before, project, {
+    source: "mcp",
+    tool,
+    prompt,
+    params: {
+      historyType,
+      ...(params || {}),
+    },
+  });
+  if (!diff) {
+    lastProposal = null;
+    return null;
+  }
+  const preview = previewProjectDiff(before, diff);
+  const pending = repository.addPendingDiff({
+    diff,
+    source: "mcp",
+    command: diff.command,
+  });
+  lastProposal = {
+    previewId: pending.id,
+    diff,
+    summary: preview.summary,
+  };
+  return lastProposal;
+}
+function applySave(
   historyType: HistoryCommandName = "project.change",
   params?: Record<string, unknown>,
 ) {
@@ -84,6 +130,28 @@ function save(
   });
 }
 function ok(text: string) {
+  if (lastProposal) {
+    const proposal = lastProposal;
+    lastProposal = null;
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              message: text,
+              status: "preview_pending_acceptance",
+              previewId: proposal.previewId,
+              diff: proposal.diff,
+              summary: proposal.summary,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
   return { content: [{ type: "text" as const, text }] };
 }
 function getFrame(frame?: string) {
@@ -751,14 +819,9 @@ server.tool(
     reload();
     project = centerObject(project);
     save("project.change", { operation: "center_object" });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(objectBounds(project), null, 2),
-        },
-      ],
-    };
+    return ok(
+      `Objeto centralizado em preview. Bounds: ${JSON.stringify(objectBounds(project))}`,
+    );
   },
 );
 
@@ -825,7 +888,7 @@ server.tool(
   { json: z.string() },
   async ({ json }) => {
     project = expandProject(JSON.parse(json));
-    save("project.replace", { operation: "apply_project_json" });
+    applySave("project.replace", { operation: "apply_project_json" });
     return ok("Projeto aplicado.");
   },
 );

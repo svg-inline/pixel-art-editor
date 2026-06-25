@@ -15,6 +15,11 @@ import {
   type HistoryCommand,
   type HistoryCommandName,
 } from "../shared/history.ts";
+import {
+  previewProjectDiff,
+  type ProjectDiffSummary,
+} from "../shared/diff.ts";
+import type { McpCommand, ProjectDiff } from "../shared/schema.ts";
 
 type RepositoryOptions = {
   legacyProjectPath?: string;
@@ -36,6 +41,21 @@ type GalleryProjectInput = {
 type UserInput = {
   email?: string;
   name?: string;
+};
+type PendingDiffInput = {
+  id?: string;
+  source?: string;
+  diff: ProjectDiff;
+  command?: McpCommand;
+};
+export type PendingProjectDiff = {
+  id: string;
+  at: string;
+  source: string;
+  command?: McpCommand;
+  diff: ProjectDiff;
+  project: Project;
+  summary: ProjectDiffSummary;
 };
 
 const ACTIVE_PROJECT_ID = "active";
@@ -181,6 +201,75 @@ export class ProjectRepository {
     return rows
       .map((row) => this.historyFromRow(row))
       .filter(isHistoryCommand);
+  }
+
+  addPendingDiff(input: PendingDiffInput): PendingProjectDiff {
+    this.ensureActiveProject();
+    const current = this.getProject();
+    const preview = previewProjectDiff(current, input.diff);
+    const item = {
+      id: input.id || uid(),
+      at: input.diff.createdAt || now(),
+      source: input.source || input.command?.source || "mcp",
+      command: input.command || input.diff.command,
+      diff: preview.diff,
+      project: preview.project,
+      summary: preview.summary,
+    };
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO pending_diffs
+           (id, project_id, at, source, command_json, diff_json,
+            preview_project_json, summary_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        item.id,
+        ACTIVE_PROJECT_ID,
+        item.at,
+        item.source,
+        JSON.stringify(item.command || {}),
+        JSON.stringify(item.diff),
+        JSON.stringify(compactProject(item.project)),
+        JSON.stringify(item.summary),
+      );
+    return item;
+  }
+
+  listPendingDiffs(): PendingProjectDiff[] {
+    this.ensureActiveProject();
+    const rows = this.db
+      .prepare(
+        `SELECT id, at, source, command_json, diff_json, preview_project_json,
+                summary_json
+         FROM pending_diffs
+         WHERE project_id = ?
+         ORDER BY at DESC
+         LIMIT 20`,
+      )
+      .all(ACTIVE_PROJECT_ID) as any[];
+    return rows.map((row) => this.pendingDiffFromRow(row));
+  }
+
+  getPendingDiff(id: string): PendingProjectDiff | null {
+    this.ensureActiveProject();
+    const row = this.db
+      .prepare(
+        `SELECT id, at, source, command_json, diff_json, preview_project_json,
+                summary_json
+         FROM pending_diffs
+         WHERE project_id = ? AND id = ?`,
+      )
+      .get(ACTIVE_PROJECT_ID, id) as any;
+    return row ? this.pendingDiffFromRow(row) : null;
+  }
+
+  deletePendingDiff(id: string) {
+    this.ensureActiveProject();
+    const result = this.db
+      .prepare("DELETE FROM pending_diffs WHERE project_id = ? AND id = ?")
+      .run(ACTIVE_PROJECT_ID, id);
+    return result.changes > 0;
   }
 
   upsertUser(input: UserInput) {
@@ -430,6 +519,20 @@ export class ProjectRepository {
       revisionBefore: row.revision_before ?? undefined,
       revisionAfter: row.revision_after ?? undefined,
       patches: row.patches_json ? JSON.parse(row.patches_json) : [],
+    };
+  }
+
+  private pendingDiffFromRow(row: any): PendingProjectDiff {
+    return {
+      id: row.id,
+      at: row.at,
+      source: row.source,
+      command: row.command_json ? JSON.parse(row.command_json) : undefined,
+      diff: JSON.parse(row.diff_json),
+      project: expandProject(JSON.parse(row.preview_project_json)),
+      summary: row.summary_json
+        ? JSON.parse(row.summary_json)
+        : previewProjectDiff(this.getProject(), JSON.parse(row.diff_json)).summary,
     };
   }
 

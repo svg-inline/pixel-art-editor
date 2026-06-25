@@ -92,6 +92,27 @@ type AiPreviewState = {
   model?: string;
   prompt: string;
   operation: AiOperation;
+  source?: "ai" | "mcp";
+  summary?: {
+    operations: number;
+    pixelChanges: number;
+    structuralChanges: number;
+    replacesProject: boolean;
+    colorsAfter: number;
+  };
+};
+type RemoteHistoryItem = {
+  id: string;
+  at: string;
+  command: string;
+  label?: string;
+  source?: string;
+  tool?: string;
+  prompt?: string;
+  timestamp?: string;
+  patches: number;
+  pixelChanges: number;
+  params?: Record<string, unknown>;
 };
 
 const DEFAULT_ZOOM = 3;
@@ -273,6 +294,7 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const aiPreviewRef = useRef<HTMLCanvasElement | null>(null);
+  const previewStateRef = useRef<AiPreviewState | null>(null);
   const canvasRafRef = useRef<number | null>(null);
   const previewRafRef = useRef<number | null>(null);
   const drawingRef = useRef(false);
@@ -310,6 +332,7 @@ function App() {
   const [dirty, setDirty] = useState(false);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [aiPreview, setAiPreview] = useState<AiPreviewState | null>(null);
+  const [remoteHistory, setRemoteHistory] = useState<RemoteHistoryItem[]>([]);
   const [maxColors, setMaxColors] = useState(32);
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
   const [replaceTo, setReplaceTo] = useState("#000000");
@@ -393,6 +416,7 @@ function App() {
     return () => clearInterval(t);
   }, [project.frames.length, project.godot?.fps]);
   useEffect(() => {
+    previewStateRef.current = aiPreview;
     renderAiPreview();
   }, [aiPreview]);
   useEffect(() => {
@@ -435,6 +459,14 @@ function App() {
       setBridgeStatus("offline");
     }
     return () => es?.close?.();
+  }, []);
+  useEffect(() => {
+    void loadMcpPreviews();
+    void loadRemoteHistory();
+    const timer = setInterval(() => {
+      void loadMcpPreviews();
+    }, 2500);
+    return () => clearInterval(timer);
   }, []);
 
   function pushHistory(command: HistoryCommand | null) {
@@ -1140,6 +1172,36 @@ function App() {
       setBridgeStatus("offline");
     }
   }
+  async function loadRemoteHistory() {
+    try {
+      const r = await bridgeFetch("/api/history");
+      if (r.ok) setRemoteHistory(await r.json());
+    } catch {}
+  }
+  async function loadMcpPreviews() {
+    try {
+      if (previewStateRef.current?.source === "ai") return;
+      const r = await bridgeFetch("/api/mcp-previews");
+      if (!r.ok) return;
+      const previews = await r.json();
+      const first = Array.isArray(previews) ? previews[0] : null;
+      if (!first) {
+        if (previewStateRef.current?.source === "mcp") setAiPreview(null);
+        return;
+      }
+      setAiPreview({
+        id: first.id,
+        project: normalizeProject(first.project),
+        provider: first.source || "mcp",
+        providerKind: "local",
+        prompt: first.command?.prompt || "",
+        operation: "edit",
+        source: "mcp",
+        summary: first.summary,
+      });
+      setBridgeStatus("prompt");
+    } catch {}
+  }
   async function saveGallery() {
     try {
       const r = await bridgeFetch("/api/gallery", {
@@ -1197,6 +1259,8 @@ function App() {
         model: data.model,
         prompt,
         operation: aiOperation,
+        source: "ai",
+        summary: data.summary,
       });
       setBridgeStatus(data.providerKind === "local" ? "local-prompt" : "prompt");
     } catch {
@@ -1210,6 +1274,7 @@ function App() {
         providerKind: "local",
         prompt,
         operation: aiOperation,
+        source: "ai",
       });
       setBridgeStatus("local-prompt");
     }
@@ -1219,7 +1284,11 @@ function App() {
     const before = projectRef.current;
     if (aiPreview.id) {
       try {
-        const r = await bridgeFetch(`/api/ai-preview/${aiPreview.id}/accept`, {
+        const acceptPath =
+          aiPreview.source === "mcp"
+            ? `/api/mcp-preview/${aiPreview.id}/accept`
+            : `/api/ai-preview/${aiPreview.id}/accept`;
+        const r = await bridgeFetch(acceptPath, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ revision: project.revision }),
@@ -1231,7 +1300,7 @@ function App() {
         }
         if (!r.ok) throw new Error("preview_accept_failed");
         const next = normalizeProject(await r.json());
-        commitHistory(before, next, "project.change", {
+        commitHistory(before, next, aiPreview.source === "mcp" ? "mcp.diff" : "project.change", {
           operation: aiPreview.operation,
           prompt: aiPreview.prompt,
           provider: aiPreview.provider,
@@ -1239,6 +1308,7 @@ function App() {
         });
         acceptSavedProject(next);
         setAiPreview(null);
+        void loadRemoteHistory();
         setBridgeStatus("saved");
         setTimeout(() => setBridgeStatus("online"), 700);
         return;
@@ -1264,7 +1334,11 @@ function App() {
   async function rejectAiPreview() {
     if (aiPreview?.id) {
       try {
-        await bridgeFetch(`/api/ai-preview/${aiPreview.id}`, {
+        const rejectPath =
+          aiPreview.source === "mcp"
+            ? `/api/mcp-preview/${aiPreview.id}`
+            : `/api/ai-preview/${aiPreview.id}`;
+        await bridgeFetch(rejectPath, {
           method: "DELETE",
         });
       } catch {}
@@ -1458,20 +1532,50 @@ function App() {
           rows="4"
         />
         <button onClick={applyPrompt}>Gerar preview</button>
+        <button onClick={loadMcpPreviews}>Buscar previews MCP</button>
         {aiPreview ? (
           <div className="ai-preview">
             <canvas ref={aiPreviewRef} />
             <div className="status">
+              Origem: <b>{aiPreview.source === "mcp" ? "MCP" : "IA"}</b>
+              <br />
               Provider: <b>{aiPreview.provider}</b>
               {aiPreview.providerKind === "local"
                 ? " · heurístico local"
                 : " · externo"}
               {aiPreview.model ? ` · ${aiPreview.model}` : ""}
+              {aiPreview.summary ? (
+                <>
+                  <br />
+                  Diff: {aiPreview.summary.operations} op ·{" "}
+                  {aiPreview.summary.pixelChanges} px
+                  {aiPreview.summary.structuralChanges
+                    ? ` · ${aiPreview.summary.structuralChanges} estrut.`
+                    : ""}
+                </>
+              ) : null}
             </div>
             <button onClick={acceptAiPreview}>Aceitar preview</button>
             <button onClick={rejectAiPreview}>Rejeitar</button>
           </div>
         ) : null}
+        <div className="history-list">
+          <div className="status">
+            Histórico remoto{" "}
+            <button onClick={loadRemoteHistory}>atualizar</button>
+          </div>
+          {remoteHistory.slice(0, 5).map((item) => (
+            <div key={item.id} className="history-item">
+              <b>{item.tool || item.command}</b>
+              <span>{new Date(item.timestamp || item.at).toLocaleString()}</span>
+              {item.prompt ? <em>{item.prompt}</em> : null}
+              <small>
+                {item.source || "bridge"} · {item.patches} patch(es) ·{" "}
+                {item.pixelChanges} px
+              </small>
+            </div>
+          ))}
+        </div>
         <button onClick={loadBackend}>Importar do MCP/bridge</button>
         <button onClick={saveBackend}>Salvar no backend</button>
         <button onClick={saveGallery}>Salvar na galeria</button>
