@@ -12,7 +12,6 @@ import {
   clamp,
   clone,
   colorsUsed,
-  compositeFrameRgba,
   DIRECTIONS,
   expandPixels,
   generatePixelArtFromPrompt,
@@ -48,6 +47,11 @@ import {
   type HistoryCommand,
   type HistoryCommandName,
 } from "../shared/history.ts";
+import {
+  renderFrameCached,
+  renderFrameFresh,
+  renderCacheStats,
+} from "./canvas-renderer.ts";
 import "./style.css";
 
 type Tool = "pencil" | "eraser" | "bucket" | "picker" | "select" | "dither";
@@ -142,10 +146,13 @@ function floodFillFrame(
   const target = pixels[idx(x, y)];
   if (target === color) return;
   const q = [[x, y]];
+  const visited = new Uint8Array(SIZE * SIZE);
   while (q.length) {
     const [cx, cy] = q.pop();
     if (cx < 0 || cy < 0 || cx >= SIZE || cy >= SIZE) continue;
     const i = idx(cx, cy);
+    if (visited[i]) continue;
+    visited[i] = 1;
     if (pixels[i] !== target) continue;
     pixels[i] = color;
     q.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
@@ -159,27 +166,6 @@ function fillBackground(
   if (background?.mode !== "color") return;
   ctx.fillStyle = isHex(background.color) ? background.color : "#0f172a";
   ctx.fillRect(0, 0, SIZE * scale, SIZE * scale);
-}
-function compositeFrame(
-  frame: Frame,
-  background: ProjectBackground = { mode: "transparent", color: "#0f172a" },
-) {
-  const out = document.createElement("canvas");
-  out.width = SIZE;
-  out.height = SIZE;
-  const ctx = out.getContext("2d");
-  if (!ctx) return out;
-  ctx.imageSmoothingEnabled = false;
-  ctx.putImageData(
-    new ImageData(
-      new Uint8ClampedArray(compositeFrameRgba(frame, background)),
-      SIZE,
-      SIZE,
-    ),
-    0,
-    0,
-  );
-  return out;
 }
 function downloadText(filename: string, text: string, type = "application/json") {
   const a = document.createElement("a");
@@ -249,9 +235,12 @@ function eraseClipPixels(layer: Layer, clip: Clip) {
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasRafRef = useRef<number | null>(null);
+  const previewRafRef = useRef<number | null>(null);
   const drawingRef = useRef(false);
   const strokeBeforeRef = useRef<Project | null>(null);
   const lastBridgeSave = useRef(0);
+  const lastRenderStatsUpdateRef = useRef(0);
   const [project, setProject] = useState<Project>(() =>
     normalizeProject(
       JSON.parse(localStorage.getItem("pixel-project") || "null"),
@@ -288,6 +277,7 @@ function App() {
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
   const [replaceTo, setReplaceTo] = useState("#000000");
   const [previewFrame, setPreviewFrame] = useState(0);
+  const [renderStatsText, setRenderStatsText] = useState("cache frio");
   const frame = activeFrameOf(project);
   const activeAsset = activeAssetOf(project);
   const activeAnimation = activeAnimationOf(project);
@@ -322,7 +312,7 @@ function App() {
     dirtyRef.current = dirty;
   }, [dirty]);
   useEffect(() => {
-    renderCanvas();
+    scheduleCanvasRender();
   }, [
     project,
     zoom,
@@ -365,8 +355,15 @@ function App() {
     return () => clearInterval(t);
   }, [project.frames.length, project.godot?.fps]);
   useEffect(() => {
-    renderPreview();
+    schedulePreviewRender();
   }, [project, previewFrame]);
+  useEffect(
+    () => () => {
+      if (canvasRafRef.current !== null) cancelAnimationFrame(canvasRafRef.current);
+      if (previewRafRef.current !== null) cancelAnimationFrame(previewRafRef.current);
+    },
+    [],
+  );
   useEffect(() => {
     let es: EventSource | undefined;
     try {
@@ -511,6 +508,20 @@ function App() {
     setRedo((r) => r.slice(1));
   }
 
+  function scheduleCanvasRender() {
+    if (canvasRafRef.current !== null) return;
+    canvasRafRef.current = requestAnimationFrame(() => {
+      canvasRafRef.current = null;
+      renderCanvas();
+    });
+  }
+  function schedulePreviewRender() {
+    if (previewRafRef.current !== null) return;
+    previewRafRef.current = requestAnimationFrame(() => {
+      previewRafRef.current = null;
+      renderPreview();
+    });
+  }
   function drawFrame(
     ctx: CanvasRenderingContext2D,
     frameToDraw: Frame,
@@ -521,7 +532,7 @@ function App() {
     ctx.globalAlpha = alpha;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(
-      compositeFrame(frameToDraw, { mode: "transparent", color: "#0f172a" }),
+      renderFrameCached(frameToDraw, { mode: "transparent", color: "#0f172a" }),
       0,
       0,
       SIZE * scale,
@@ -560,8 +571,10 @@ function App() {
   function renderCanvas() {
     const c = canvasRef.current;
     if (!c) return;
-    c.width = SIZE * zoom;
-    c.height = SIZE * zoom;
+    const width = SIZE * zoom;
+    const height = SIZE * zoom;
+    if (c.width !== width) c.width = width;
+    if (c.height !== height) c.height = height;
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
@@ -586,13 +599,21 @@ function App() {
         ctx.setLineDash([]);
       }
     }
+    const now = performance.now();
+    if (now - lastRenderStatsUpdateRef.current > 1000) {
+      lastRenderStatsUpdateRef.current = now;
+      const stats = renderCacheStats();
+      setRenderStatsText(
+        `layers ${stats.layerHits}/${stats.layerMisses} · frames ${stats.frameHits}/${stats.frameMisses}`,
+      );
+    }
   }
   function renderPreview() {
     const c = previewRef.current;
     if (!c) return;
     const scale = 2;
-    c.width = SIZE * scale;
-    c.height = SIZE * scale;
+    if (c.width !== SIZE * scale) c.width = SIZE * scale;
+    if (c.height !== SIZE * scale) c.height = SIZE * scale;
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
@@ -608,6 +629,62 @@ function App() {
       y: Math.floor((e.clientY - r.top) / zoom),
     };
   }
+  function cloneForActiveLayerEdit(projectInput: Project) {
+    const projectNext: Project = {
+      ...projectInput,
+      godot: { ...projectInput.godot },
+      background: { ...projectInput.background },
+      palette: [...projectInput.palette],
+      assets: [...projectInput.assets],
+      frames: [...projectInput.frames],
+    };
+    const assetIndex = projectNext.assets.findIndex(
+      (asset) => asset.id === projectNext.activeAssetId,
+    );
+    const asset = {
+      ...projectNext.assets[Math.max(0, assetIndex)],
+      palette: [
+        ...(projectNext.assets[Math.max(0, assetIndex)]?.palette ||
+          projectNext.palette),
+      ],
+      animations: [
+        ...(projectNext.assets[Math.max(0, assetIndex)]?.animations || []),
+      ],
+    };
+    projectNext.assets[Math.max(0, assetIndex)] = asset;
+    const animationIndex = asset.animations.findIndex(
+      (animation) => animation.id === projectNext.activeAnimationId,
+    );
+    const animation = {
+      ...asset.animations[Math.max(0, animationIndex)],
+      frames: [
+        ...(asset.animations[Math.max(0, animationIndex)]?.frames ||
+          projectNext.frames),
+      ],
+    };
+    asset.animations[Math.max(0, animationIndex)] = animation;
+    projectNext.frames = animation.frames;
+    const frameIndexToEdit = Math.max(
+      0,
+      animation.frames.findIndex((item) => item.id === projectNext.activeFrameId),
+    );
+    const frameToEdit = {
+      ...animation.frames[frameIndexToEdit],
+      pivot: { ...animation.frames[frameIndexToEdit].pivot },
+      hitboxes: animation.frames[frameIndexToEdit].hitboxes.map((hitbox) => ({
+        ...hitbox,
+      })),
+      layers: [...animation.frames[frameIndexToEdit].layers],
+    };
+    animation.frames[frameIndexToEdit] = frameToEdit;
+    const layerIndexToEdit = activeLayerIndexOf(frameToEdit);
+    const layerToEdit = {
+      ...frameToEdit.layers[layerIndexToEdit],
+      pixels: expandPixels(frameToEdit.layers[layerIndexToEdit].pixels).slice(),
+    };
+    frameToEdit.layers[layerIndexToEdit] = layerToEdit;
+    return { project: projectNext, frame: frameToEdit, layer: layerToEdit };
+  }
   function editAt(x: number, y: number) {
     if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
     if (tool === "picker") {
@@ -616,9 +693,10 @@ function App() {
       return;
     }
     markDirty();
-    const n = cloneProject(projectRef.current);
-    const f = activeFrameOf(n);
-    const l = activeLayerOf(f);
+    const edit = cloneForActiveLayerEdit(projectRef.current);
+    const n = edit.project;
+    const f = edit.frame;
+    const l = edit.layer;
     const cellSize =
       showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
     const cellX = Math.floor(x / cellSize) * cellSize;
@@ -633,7 +711,7 @@ function App() {
     if (tool === "bucket") floodFillFrame(f, activeLayerIndexOf(f), x, y, color);
     if (tool === "dither")
       paintCell((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
-    const next = normalizeProject(n);
+    const next = n;
     projectRef.current = next;
     setProject(next);
   }
@@ -910,7 +988,7 @@ function App() {
   function exportPng() {
     downloadCanvas(
       `${slug(project.godot.asset)}_${slug(project.godot.animation)}_f${frameIndex + 1}.png`,
-      compositeFrame(frame, project.background),
+      renderFrameFresh(frame, project.background),
     );
   }
   function exportSpritesheet() {
@@ -921,7 +999,7 @@ function App() {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     project.frames.forEach((f, i) =>
-      ctx.drawImage(compositeFrame(f, project.background), i * SIZE, 0),
+      ctx.drawImage(renderFrameFresh(f, project.background), i * SIZE, 0),
     );
     downloadCanvas(
       `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`,
@@ -1244,6 +1322,8 @@ function App() {
           <br />
           Autosave: <b>{autosaveLabel}</b>
           {dirty ? " · alterações pendentes" : ""}
+          <br />
+          Render: <b>{renderStatsText}</b>
         </div>
         <select
           value={aiOperation}
