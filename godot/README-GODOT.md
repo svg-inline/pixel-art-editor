@@ -18,6 +18,8 @@ res://addons/pixel_art_mcp/
 
 Ative em `Project > Project Settings > Plugins > Pixel Art MCP`.
 
+Validação rápida: depois de copiar o addon, abra `Project > Project Settings > Plugins` e confirme que `Pixel Art MCP` aparece sem erro de parser. Ative o plugin, abra o dock, use `Listar assets da bridge` e depois `Importar asset completo` com a bridge local em execução.
+
 O dock permite:
 
 - enviar prompt para a bridge local `http://127.0.0.1:8787`;

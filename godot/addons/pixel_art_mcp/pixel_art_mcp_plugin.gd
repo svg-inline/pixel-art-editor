@@ -258,8 +258,8 @@ func _apply_pixel_perfect_settings(sheet_path:String) -> void:
 	ProjectSettings.set_setting("rendering/textures/canvas_textures/default_texture_filter", 0)
 	ProjectSettings.save()
 	var settings_path := sheet_path + ".pixel_art_import.json"
-	var file := FileAccess.open(settings_path, FileAccess.WRITE)
-	file.store_string(JSON.stringify(last_metadata.get("import", {}), "\t"))
+	var settings_file := FileAccess.open(settings_path, FileAccess.WRITE)
+	settings_file.store_string(JSON.stringify(last_metadata.get("import", {}), "\t"))
 
 func _create_spriteframes_from_metadata() -> void:
 	if last_metadata.is_empty():
