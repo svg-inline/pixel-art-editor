@@ -1,0 +1,190 @@
+[
+  {
+    "file": "TASK-001-corrigir-bug-godot-redeclaracao.md",
+    "title": "TASK-001 — Corrigir bug de redeclaração no addon Godot",
+    "priority": "P0",
+    "area": "Godot / Integração",
+    "type": "Bugfix",
+    "depends": []
+  },
+  {
+    "file": "TASK-002-padronizar-package-manager-lockfiles.md",
+    "title": "TASK-002 — Padronizar package manager e lockfile",
+    "priority": "P0",
+    "area": "Tooling / Repositório",
+    "type": "Manutenção",
+    "depends": []
+  },
+  {
+    "file": "TASK-003-limpar-repositorio-runtime-build-artifacts.md",
+    "title": "TASK-003 — Limpar repositório de runtime, build e arquivos indevidos",
+    "priority": "P0",
+    "area": "Repositório / Distribuição",
+    "type": "Higiene técnica",
+    "depends": []
+  },
+  {
+    "file": "TASK-004-refatorar-app-tsx-em-hooks-e-componentes.md",
+    "title": "TASK-004 — Refatorar `App.tsx` em hooks e componentes",
+    "priority": "P1",
+    "area": "Frontend / Arquitetura",
+    "type": "Refatoração estrutural",
+    "depends": [
+      "TASK-002",
+      "TASK-003"
+    ]
+  },
+  {
+    "file": "TASK-005-quebrar-pixel-core-em-modulos.md",
+    "title": "TASK-005 — Quebrar `pixel-core.ts` em módulos especializados",
+    "priority": "P1",
+    "area": "Shared Core / Arquitetura",
+    "type": "Refatoração estrutural",
+    "depends": [
+      "TASK-004 pode ser feita antes ou em paralelo, mas não no mesmo PR grande."
+    ]
+  },
+  {
+    "file": "TASK-006-migrar-typescript-strict-gradual.md",
+    "title": "TASK-006 — Migrar TypeScript para strict mode gradual",
+    "priority": "P1",
+    "area": "TypeScript / Qualidade",
+    "type": "Hardening técnico",
+    "depends": [
+      "TASK-005 recomendada antes para reduzir área de impacto."
+    ]
+  },
+  {
+    "file": "TASK-007-fortalecer-zod-schemas-contratos.md",
+    "title": "TASK-007 — Fortalecer schemas Zod e contratos de dados",
+    "priority": "P1",
+    "area": "Schemas / Segurança / MCP",
+    "type": "Hardening técnico",
+    "depends": [
+      "TASK-005",
+      "TASK-006 recomendadas antes ou em paralelo."
+    ]
+  },
+  {
+    "file": "TASK-008-godot-importer-profissional.md",
+    "title": "TASK-008 — Criar importação Godot profissional",
+    "priority": "P1",
+    "area": "Godot / Game Pipeline",
+    "type": "Feature profissional",
+    "depends": [
+      "TASK-001",
+      "TASK-007"
+    ]
+  },
+  {
+    "file": "TASK-009-testes-e2e-playwright-fluxos-editor.md",
+    "title": "TASK-009 — Adicionar testes E2E dos fluxos principais do editor",
+    "priority": "P1",
+    "area": "Testes / Qualidade",
+    "type": "Cobertura funcional",
+    "depends": [
+      "TASK-004 recomendada antes para selectors mais estáveis."
+    ]
+  },
+  {
+    "file": "TASK-010-pipeline-ia-real-provider-diff-preview.md",
+    "title": "TASK-010 — Profissionalizar pipeline de IA com provider, diff, preview e auditoria",
+    "priority": "P1",
+    "area": "IA / MCP / Bridge",
+    "type": "Feature estrutural",
+    "depends": [
+      "TASK-007",
+      "TASK-014"
+    ]
+  },
+  {
+    "file": "TASK-011-otimizar-render-canvas-performance.md",
+    "title": "TASK-011 — Otimizar renderização do canvas",
+    "priority": "P2",
+    "area": "Canvas / Performance",
+    "type": "Otimização",
+    "depends": [
+      "TASK-005",
+      "TASK-009 recomendadas antes."
+    ]
+  },
+  {
+    "file": "TASK-012-implementar-ferramentas-ux-editor-profissional.md",
+    "title": "TASK-012 — Implementar ferramentas e UX de editor profissional",
+    "priority": "P2",
+    "area": "Frontend / UX / Ferramentas",
+    "type": "Feature profissional",
+    "depends": [
+      "TASK-004",
+      "TASK-005",
+      "TASK-009"
+    ]
+  },
+  {
+    "file": "TASK-013-modelo-multi-assets-animacoes-direcoes.md",
+    "title": "TASK-013 — Consolidar modelo multi-assets, animações e direções",
+    "priority": "P2",
+    "area": "Modelo de dados / Game Pipeline",
+    "type": "Arquitetura de produto",
+    "depends": [
+      "TASK-005",
+      "TASK-007"
+    ]
+  },
+  {
+    "file": "TASK-014-historico-undo-redo-ui-patches.md",
+    "title": "TASK-014 — Melhorar histórico, undo/redo e UI de patches",
+    "priority": "P2",
+    "area": "Histórico / UX / Persistência",
+    "type": "Feature estrutural",
+    "depends": [
+      "TASK-007",
+      "TASK-010"
+    ]
+  },
+  {
+    "file": "TASK-015-qa-visual-exportacao-profissional.md",
+    "title": "TASK-015 — Criar QA visual profissional para pixel art e exports",
+    "priority": "P2",
+    "area": "QA / Exportação / Arte",
+    "type": "Qualidade visual",
+    "depends": [
+      "TASK-005",
+      "TASK-007"
+    ]
+  },
+  {
+    "file": "TASK-016-ci-build-typecheck-testes.md",
+    "title": "TASK-016 — Criar CI com build, typecheck e testes",
+    "priority": "P1",
+    "area": "DevOps / Qualidade",
+    "type": "Automação",
+    "depends": [
+      "TASK-002",
+      "TASK-003"
+    ]
+  },
+  {
+    "file": "TASK-017-documentacao-setup-dev-env.md",
+    "title": "TASK-017 — Melhorar documentação de setup, variáveis e fluxos",
+    "priority": "P2",
+    "area": "Documentação / DX",
+    "type": "Documentação técnica",
+    "depends": [
+      "TASK-002",
+      "TASK-003",
+      "TASK-010"
+    ]
+  },
+  {
+    "file": "TASK-018-melhorar-export-profiles-godot-unity-atlas.md",
+    "title": "TASK-018 — Melhorar export profiles para Godot, Unity e atlas",
+    "priority": "P2",
+    "area": "Exportação / Game Pipeline",
+    "type": "Feature profissional",
+    "depends": [
+      "TASK-013",
+      "TASK-015"
+    ]
+  }
+]
