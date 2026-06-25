@@ -9,6 +9,7 @@ import {
   activeFrameOf,
   activeAssetOf,
   atlasMetadata,
+  colorsUsed,
   compactProject,
   compositeFrameRgba,
   createVariation,
@@ -29,8 +30,14 @@ import {
   HISTORY_LIMIT,
   isHistoryCommand,
   type HistoryCommand,
+  type HistoryCommandName,
 } from "../shared/history.ts";
-import { createAiProvider, type AiOperation } from "./ai/provider.ts";
+import {
+  AiOperationSchema,
+  createAiProvider,
+  type AiOperation,
+  type AiProviderResult,
+} from "./ai/provider.ts";
 import { encodePngRgba } from "./png.ts";
 import {
   defaultDbPath,
@@ -78,6 +85,20 @@ class RevisionConflictError extends Error {
 type WriteProjectOptions = {
   addHistory?: boolean;
   expectedRevision?: number | null;
+  historyType?: HistoryCommandName;
+  historyParams?: Record<string, unknown>;
+  historySource?: string;
+};
+type AiPreview = {
+  id: string;
+  at: string;
+  baseRevision: number;
+  prompt: string;
+  operation: AiOperation;
+  provider: string;
+  providerKind: "local" | "http";
+  model?: string;
+  project: ReturnType<typeof compactProject>;
 };
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const SelectionSchema = z
@@ -89,15 +110,6 @@ const SelectionSchema = z
   })
   .nullable()
   .optional();
-const AiOperationSchema = z.enum([
-  "generate",
-  "edit",
-  "edit_selection",
-  "replace_subject",
-  "create_variation",
-  "recolor_palette",
-  "extend_animation",
-]);
 const ProjectPostSchema = z
   .object({
     project: z.any().optional(),
@@ -175,6 +187,7 @@ const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 let writeQueue = Promise.resolve();
 let lastMtime = 0;
 const clients = new Set<http.ServerResponse>();
+const aiPreviews = new Map<string, AiPreview>();
 
 function ensureDir(filePath: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -249,9 +262,9 @@ async function writeProject(
       const historyCommand = createProjectCommand(
         current,
         project,
-        "project.change",
-        { source: "bridge" },
-        "bridge",
+        options.historyType || "project.change",
+        options.historyParams || { source: "bridge" },
+        options.historySource || "bridge",
       );
       if (historyCommand) {
         db.history.unshift(historyCommand);
@@ -389,6 +402,34 @@ function renderGodotAssetSpritesheetPng(project: Project) {
   });
   return encodePngRgba(width, height, sheet);
 }
+function aiHistoryParams(
+  result: AiProviderResult,
+  data: { prompt?: string; operation?: AiOperation },
+) {
+  return {
+    operation: data.operation || "generate",
+    prompt: data.prompt || "",
+    provider: result.provider,
+    providerKind: result.providerKind,
+    model: result.model,
+  };
+}
+async function runAiPrompt(data: z.infer<typeof AiPromptSchema>) {
+  const project = expandProject(data.project || readProject());
+  return aiProvider.generate({
+    prompt: data.prompt,
+    operation: (data.operation || "generate") as AiOperation,
+    project,
+    selection: data.selection || null,
+    layer: data.layer,
+    from: data.from,
+    to: data.to,
+    maxColors: data.maxColors,
+    palette: project.palette.length
+      ? project.palette
+      : colorsUsed(project).map(([color]) => color),
+  });
+}
 
 fs.watchFile(PROJECT_PATH, { interval: 500 }, () => {
   try {
@@ -467,24 +508,71 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/ai-prompt" && req.method === "POST") {
       const data = parseBody(await body(req), AiPromptSchema);
-      const project = await aiProvider.run({
-        prompt: data.prompt,
-        operation: (data.operation || "generate") as AiOperation,
-        project: data.project || readProject(),
-        selection: data.selection || null,
-        layer: data.layer,
-        from: data.from,
-        to: data.to,
-        maxColors: data.maxColors,
-      });
+      const result = await runAiPrompt(data);
       return json(
         req,
         res,
         200,
-        await writeProject(project, {
+        await writeProject(result.project, {
           expectedRevision: expectedRevisionFrom(data),
+          historyParams: aiHistoryParams(result, {
+            prompt: data.prompt,
+            operation: (data.operation || "generate") as AiOperation,
+          }),
         }),
       );
+    }
+    if (url.pathname === "/api/ai-preview" && req.method === "POST") {
+      const data = parseBody(await body(req), AiPromptSchema);
+      const result = await runAiPrompt(data);
+      const preview: AiPreview = {
+        id: id(),
+        at: new Date().toISOString(),
+        baseRevision: expectedRevisionFrom(data) ?? readProject().revision,
+        prompt: data.prompt,
+        operation: (data.operation || "generate") as AiOperation,
+        provider: result.provider,
+        providerKind: result.providerKind,
+        model: result.model,
+        project: compactProject(result.project),
+      };
+      aiPreviews.set(preview.id, preview);
+      return json(req, res, 200, {
+        ...preview,
+        project: result.project,
+      });
+    }
+    if (
+      url.pathname.startsWith("/api/ai-preview/") &&
+      url.pathname.endsWith("/accept") &&
+      req.method === "POST"
+    ) {
+      const previewId = url.pathname.split("/").at(-2) || "";
+      const preview = aiPreviews.get(previewId);
+      if (!preview)
+        return json(req, res, 404, { error: "ai_preview_not_found" });
+      const data = parseBody(await body(req), ProjectPostSchema);
+      const saved = await writeProject(preview.project, {
+        expectedRevision: expectedRevisionFrom(data) ?? preview.baseRevision,
+        historyParams: {
+          operation: preview.operation,
+          prompt: preview.prompt,
+          provider: preview.provider,
+          providerKind: preview.providerKind,
+          model: preview.model,
+          previewId: preview.id,
+        },
+      });
+      aiPreviews.delete(preview.id);
+      return json(req, res, 200, saved);
+    }
+    if (
+      url.pathname.startsWith("/api/ai-preview/") &&
+      req.method === "DELETE"
+    ) {
+      const previewId = url.pathname.split("/").pop() || "";
+      const existed = aiPreviews.delete(previewId);
+      return json(req, res, existed ? 200 : 404, { ok: existed });
     }
     if (url.pathname === "/api/tools/edit-selection" && req.method === "POST") {
       const data = parseBody(await body(req), EditSelectionSchema);

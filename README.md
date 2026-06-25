@@ -104,6 +104,9 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 - `GET /api/assets`: lista assets/animações disponíveis.
 - `POST /api/project`: salva projeto.
 - `POST /api/ai-prompt`: aplica prompt com `operation`, `project` e `selection`.
+- `POST /api/ai-preview`: gera proposta sem aplicar.
+- `POST /api/ai-preview/:id/accept`: aplica uma proposta validada.
+- `DELETE /api/ai-preview/:id`: descarta uma proposta.
 - `POST /api/tools/edit-selection`: edita seleção.
 - `POST /api/tools/recolor-palette`: substitui cor global.
 - `POST /api/tools/limit-colors`: limita paleta.
@@ -122,18 +125,48 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 
 ## Provider de IA externo
 
-Por padrão, o projeto usa um gerador local determinístico para validar fluxo, edição e integração. Para conectar IA externa, suba um endpoint HTTP que receba:
+Por padrão, o projeto usa um gerador local determinístico para validar fluxo, edição e integração. Esse fallback é heurístico; ele não deve ser apresentado como IA real. Para conectar IA externa, suba um endpoint HTTP e configure `PIXEL_AI_ENDPOINT`.
+
+A bridge envia prompt, projeto compacto, seleção, paleta e constraints:
 
 ```json
 {
   "prompt": "crie personagem idle oeste",
   "operation": "generate",
-  "project": {},
-  "selection": {"x": 80, "y": 60, "w": 64, "h": 96}
+  "project": { "format": "pixel-art-compact-v1" },
+  "selection": {"x": 80, "y": 60, "w": 64, "h": 96},
+  "palette": ["#111827", "#f59e0b"],
+  "constraints": {
+    "size": 256,
+    "maxColors": 32,
+    "preserveOutsideSelection": true
+  }
 }
 ```
 
-E retorne um projeto no mesmo schema. Depois rode:
+O endpoint deve responder JSON com um destes formatos:
+
+```json
+{ "provider": "meu-provider", "model": "pixel-model", "project": {} }
+```
+
+```json
+{
+  "diff": {
+    "frameIndex": 0,
+    "layerName": "Base",
+    "changes": [{ "x": 120, "y": 80, "color": "#f59e0b" }]
+  }
+}
+```
+
+```json
+{ "frames": [{ "name": "Frame 1", "layers": [] }] }
+```
+
+Respostas inválidas são rejeitadas por Zod e não sobrescrevem o projeto. A saída é pós-processada para manter tamanho 256x256, alpha como transparência, paleta/limite de cores e bounds da seleção quando a operação preserva seleção.
+
+Depois rode:
 
 ```bash
 PIXEL_AI_ENDPOINT="http://127.0.0.1:9000/generate" PIXEL_AI_API_KEY="opcional" npm run bridge

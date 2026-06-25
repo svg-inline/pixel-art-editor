@@ -220,3 +220,17 @@ canvas {
   margin: 0;
   font-size: 12px;
 }
+.ai-preview {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 8px;
+  margin: 8px 0;
+  background: #0f172a;
+}
+.ai-preview canvas {
+  width: 128px;
+  height: 128px;
+  display: block;
+  margin: 0 0 8px;
+  image-rendering: pixelated;
+}

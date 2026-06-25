@@ -22,11 +22,9 @@ import {
   drawEllipseOutline,
   drawLine,
   drawRect,
-  editSelection,
   expandProject,
   extendAnimation,
   frameByName,
-  generatePixelArtFromPrompt,
   godotMetadata,
   layerByName,
   limitColors,
@@ -49,6 +47,7 @@ import {
   type HistoryCommand,
   type HistoryCommandName,
 } from "../shared/history.ts";
+import { createAiProvider, type AiOperation } from "./ai/provider.ts";
 import { encodePngRgba } from "./png.ts";
 import {
   defaultDbPath,
@@ -64,6 +63,7 @@ const projectPath = path.resolve(
 );
 const dbPath = path.resolve(process.env.PIXEL_DB_PATH || defaultDbPath());
 const writeCompact = process.env.PIXEL_PROJECT_COMPACT !== "0";
+const aiProvider = createAiProvider();
 type Db = { users: any[]; gallery: any[]; history: HistoryCommand[] };
 function readJson(filePath: string, fallback: any) {
   if (!fs.existsSync(filePath)) return fallback;
@@ -171,6 +171,24 @@ function spritesheetBase64() {
       );
   });
   return encodePngRgba(width, SIZE, rgba).toString("base64");
+}
+async function runAiTool(
+  prompt: string,
+  operation: AiOperation,
+  input?: {
+    selection?: { x: number; y: number; w: number; h: number } | null;
+    layer?: string;
+  },
+) {
+  reload();
+  return aiProvider.generate({
+    prompt,
+    operation,
+    project,
+    selection: input?.selection || null,
+    layer: input?.layer,
+    palette: project.palette,
+  });
 }
 function godotAssetSpritesheetBase64() {
   reload();
@@ -542,27 +560,92 @@ server.tool(
 
 server.tool(
   "generate_pixel_art",
-  "Gera sprite/frames a partir de prompt e salva no projeto compartilhado.",
+  "Gera sprite/frames por provider de IA configurado e salva no projeto.",
   { prompt: z.string() },
   async ({ prompt }) => {
-    reload();
-    project = generatePixelArtFromPrompt(prompt, project);
-    save("project.replace", { operation: "generate_pixel_art", prompt });
+    const result = await runAiTool(prompt, "generate");
+    project = result.project;
+    save("project.replace", {
+      operation: "generate_pixel_art",
+      prompt,
+      provider: result.provider,
+      providerKind: result.providerKind,
+      model: result.model,
+    });
     return ok(
-      `Pixel art gerada. Frames: ${project.frames.length}, animação: ${project.godot.animation}`,
+      `Preview aplicado via ${result.provider}. Frames: ${project.frames.length}, animação: ${project.godot.animation}`,
     );
   },
 );
 
 server.tool(
   "draw_sprite_from_prompt",
-  "Alias compatível: gera sprite/frames por prompt.",
+  "Alias compatível: gera sprite/frames por provider de IA configurado.",
   { prompt: z.string() },
   async ({ prompt }) => {
-    reload();
-    project = generatePixelArtFromPrompt(prompt, project);
-    save("project.replace", { operation: "draw_sprite_from_prompt", prompt });
-    return ok(`Prompt aplicado. Frames: ${project.frames.length}`);
+    const result = await runAiTool(prompt, "generate");
+    project = result.project;
+    save("project.replace", {
+      operation: "draw_sprite_from_prompt",
+      prompt,
+      provider: result.provider,
+      providerKind: result.providerKind,
+      model: result.model,
+    });
+    return ok(`Prompt aplicado via ${result.provider}. Frames: ${project.frames.length}`);
+  },
+);
+
+server.tool(
+  "preview_ai_prompt",
+  "Gera preview PNG base64 via provider de IA sem salvar o projeto.",
+  {
+    prompt: z.string(),
+    operation: z
+      .enum(["generate", "edit", "edit_selection", "replace_subject"])
+      .default("generate"),
+    x: z.number().int().min(0).max(255).optional(),
+    y: z.number().int().min(0).max(255).optional(),
+    w: z.number().int().min(1).max(256).optional(),
+    h: z.number().int().min(1).max(256).optional(),
+    layer: z.string().optional(),
+  },
+  async ({ prompt, operation, x, y, w, h, layer }) => {
+    const hasSelection =
+      typeof x === "number" &&
+      typeof y === "number" &&
+      typeof w === "number" &&
+      typeof h === "number";
+    const result = await runAiTool(prompt, operation as AiOperation, {
+      selection: hasSelection ? { x, y, w: w - 1, h: h - 1 } : null,
+      layer,
+    });
+    const frame =
+      result.project.frames.find(
+        (item) => item.id === result.project.activeFrameId,
+      ) || result.project.frames[0];
+    const preview = encodePngRgba(
+      SIZE,
+      SIZE,
+      compositeFrameRgba(frame, result.project.background),
+    ).toString("base64");
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              provider: result.provider,
+              providerKind: result.providerKind,
+              model: result.model,
+              previewPngBase64: preview,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
   },
 );
 
@@ -571,10 +654,17 @@ server.tool(
   "Edita o projeto atual com instrução em linguagem natural.",
   { prompt: z.string(), layer: z.string().optional() },
   async ({ prompt, layer }) => {
-    reload();
-    project = editSelection(project, prompt, null, layer);
-    save("project.change", { operation: "edit_pixel_art", prompt, layer });
-    return ok("Edição aplicada no projeto.");
+    const result = await runAiTool(prompt, "edit", { layer });
+    project = result.project;
+    save("project.change", {
+      operation: "edit_pixel_art",
+      prompt,
+      layer,
+      provider: result.provider,
+      providerKind: result.providerKind,
+      model: result.model,
+    });
+    return ok(`Edição aplicada via ${result.provider}.`);
   },
 );
 
@@ -590,13 +680,11 @@ server.tool(
     layer: z.string().optional(),
   },
   async ({ prompt, x, y, w, h, layer }) => {
-    reload();
-    project = editSelection(
-      project,
-      prompt,
-      { x, y, w: w - 1, h: h - 1 },
+    const result = await runAiTool(prompt, "edit_selection", {
+      selection: { x, y, w: w - 1, h: h - 1 },
       layer,
-    );
+    });
+    project = result.project;
     save("project.change", {
       operation: "edit_selection",
       prompt,
@@ -605,8 +693,11 @@ server.tool(
       w,
       h,
       layer,
+      provider: result.provider,
+      providerKind: result.providerKind,
+      model: result.model,
     });
-    return ok("Seleção editada.");
+    return ok(`Seleção editada via ${result.provider}.`);
   },
 );
 
@@ -622,13 +713,11 @@ server.tool(
     layer: z.string().optional(),
   },
   async ({ prompt, x, y, w, h, layer }) => {
-    reload();
-    project = editSelection(
-      project,
-      prompt,
-      { x, y, w: w - 1, h: h - 1 },
+    const result = await runAiTool(prompt, "replace_subject", {
+      selection: { x, y, w: w - 1, h: h - 1 },
       layer,
-    );
+    });
+    project = result.project;
     save("project.change", {
       operation: "replace_subject",
       prompt,
@@ -637,8 +726,11 @@ server.tool(
       w,
       h,
       layer,
+      provider: result.provider,
+      providerKind: result.providerKind,
+      model: result.model,
     });
-    return ok("Objeto/sujeito substituído na seleção.");
+    return ok(`Objeto/sujeito substituído via ${result.provider}.`);
   },
 );
 

@@ -84,6 +84,15 @@ type GalleryItem = {
   name: string;
   frames: number;
 };
+type AiPreviewState = {
+  id?: string;
+  project: Project;
+  provider: string;
+  providerKind: "local" | "http";
+  model?: string;
+  prompt: string;
+  operation: AiOperation;
+};
 
 const DEFAULT_ZOOM = 3;
 const AUTOSAVE_DEBOUNCE_MS = 900;
@@ -263,6 +272,7 @@ function eraseClipPixels(layer: Layer, clip: Clip) {
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const aiPreviewRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRafRef = useRef<number | null>(null);
   const previewRafRef = useRef<number | null>(null);
   const drawingRef = useRef(false);
@@ -299,6 +309,7 @@ function App() {
     useState<AutosaveStatus>("idle");
   const [dirty, setDirty] = useState(false);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
+  const [aiPreview, setAiPreview] = useState<AiPreviewState | null>(null);
   const [maxColors, setMaxColors] = useState(32);
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
   const [replaceTo, setReplaceTo] = useState("#000000");
@@ -381,6 +392,9 @@ function App() {
     );
     return () => clearInterval(t);
   }, [project.frames.length, project.godot?.fps]);
+  useEffect(() => {
+    renderAiPreview();
+  }, [aiPreview]);
   useEffect(() => {
     schedulePreviewRender();
   }, [project, previewFrame]);
@@ -646,6 +660,25 @@ function App() {
     ctx.clearRect(0, 0, c.width, c.height);
     fillBackground(ctx, project.background, scale);
     drawFrame(ctx, project.frames[previewFrame] || project.frames[0], scale, 1);
+  }
+  function renderAiPreview() {
+    const c = aiPreviewRef.current;
+    if (!c) return;
+    c.width = SIZE;
+    c.height = SIZE;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    if (!aiPreview) return;
+    const previewFrameToDraw = activeFrameOf(aiPreview.project);
+    ctx.drawImage(
+      renderFrameFresh(previewFrameToDraw, aiPreview.project.background),
+      0,
+      0,
+      SIZE,
+      SIZE,
+    );
   }
 
   function getCell(e: ReactMouseEvent<HTMLCanvasElement>): Point {
@@ -1137,9 +1170,8 @@ function App() {
     }
   }
   async function applyPrompt() {
-    const before = projectRef.current;
     try {
-      const r = await bridgeFetch("/api/ai-prompt", {
+      const r = await bridgeFetch("/api/ai-preview", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1156,29 +1188,88 @@ function App() {
         return;
       }
       if (!r.ok) throw new Error("bridge off");
-      const next = normalizeProject(await r.json());
-      commitHistory(before, next, "project.change", {
-        operation: aiOperation,
+      const data = await r.json();
+      setAiPreview({
+        id: data.id,
+        project: normalizeProject(data.project),
+        provider: data.provider || "unknown",
+        providerKind: data.providerKind || "http",
+        model: data.model,
         prompt,
+        operation: aiOperation,
       });
-      acceptSavedProject(next);
-      setBridgeStatus("prompt");
-      setTimeout(() => setBridgeStatus("online"), 700);
+      setBridgeStatus(data.providerKind === "local" ? "local-prompt" : "prompt");
     } catch {
-      markDirty();
       const next =
         aiOperation === "generate"
           ? generatePixelArtFromPrompt(prompt, project)
           : project;
-      commitHistory(before, next, "project.change", {
-        operation: aiOperation,
+      setAiPreview({
+        project: normalizeProject(next),
+        provider: "local-heuristic/browser",
+        providerKind: "local",
         prompt,
-        fallback: true,
+        operation: aiOperation,
       });
-      projectRef.current = next;
-      setProject(next);
       setBridgeStatus("local-prompt");
     }
+  }
+  async function acceptAiPreview() {
+    if (!aiPreview) return;
+    const before = projectRef.current;
+    if (aiPreview.id) {
+      try {
+        const r = await bridgeFetch(`/api/ai-preview/${aiPreview.id}/accept`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ revision: project.revision }),
+        });
+        if (r.status === 409) {
+          setAutosaveStatus("conflict");
+          setBridgeStatus("conflict");
+          return;
+        }
+        if (!r.ok) throw new Error("preview_accept_failed");
+        const next = normalizeProject(await r.json());
+        commitHistory(before, next, "project.change", {
+          operation: aiPreview.operation,
+          prompt: aiPreview.prompt,
+          provider: aiPreview.provider,
+          providerKind: aiPreview.providerKind,
+        });
+        acceptSavedProject(next);
+        setAiPreview(null);
+        setBridgeStatus("saved");
+        setTimeout(() => setBridgeStatus("online"), 700);
+        return;
+      } catch {
+        setBridgeStatus("offline");
+        return;
+      }
+    }
+    const next = normalizeProject(aiPreview.project);
+    commitHistory(before, next, "project.change", {
+      operation: aiPreview.operation,
+      prompt: aiPreview.prompt,
+      provider: aiPreview.provider,
+      providerKind: aiPreview.providerKind,
+      fallback: true,
+    });
+    markDirty();
+    projectRef.current = next;
+    setProject(next);
+    setAiPreview(null);
+    setBridgeStatus("local-prompt");
+  }
+  async function rejectAiPreview() {
+    if (aiPreview?.id) {
+      try {
+        await bridgeFetch(`/api/ai-preview/${aiPreview.id}`, {
+          method: "DELETE",
+        });
+      } catch {}
+    }
+    setAiPreview(null);
   }
 
   return (
@@ -1366,7 +1457,21 @@ function App() {
           onChange={(e) => setPrompt(e.target.value)}
           rows="4"
         />
-        <button onClick={applyPrompt}>Aplicar prompt no canvas</button>
+        <button onClick={applyPrompt}>Gerar preview</button>
+        {aiPreview ? (
+          <div className="ai-preview">
+            <canvas ref={aiPreviewRef} />
+            <div className="status">
+              Provider: <b>{aiPreview.provider}</b>
+              {aiPreview.providerKind === "local"
+                ? " · heurístico local"
+                : " · externo"}
+              {aiPreview.model ? ` · ${aiPreview.model}` : ""}
+            </div>
+            <button onClick={acceptAiPreview}>Aceitar preview</button>
+            <button onClick={rejectAiPreview}>Rejeitar</button>
+          </div>
+        ) : null}
         <button onClick={loadBackend}>Importar do MCP/bridge</button>
         <button onClick={saveBackend}>Salvar no backend</button>
         <button onClick={saveGallery}>Salvar na galeria</button>
