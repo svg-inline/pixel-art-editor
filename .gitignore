@@ -1,6 +1,11 @@
 node_modules/
 dist/
 .env
+# npm is the official package manager; keep package-lock.json versioned.
+yarn.lock
+pnpm-lock.yaml
+bun.lock
+bun.lockb
 runtime/*
 !runtime/.gitkeep
 !runtime/README.md

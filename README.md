@@ -4,8 +4,10 @@ Editor web local-first para pixel art 256x256 com camadas, frames, spritesheets,
 
 ## Instalar
 
+Gerenciador oficial: npm. O lockfile versionado é `package-lock.json`; não use Yarn/Pnpm neste projeto.
+
 ```bash
-npm install
+npm ci
 ```
 
 ## Rodar editor com integração em tempo real
