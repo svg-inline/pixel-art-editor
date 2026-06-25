@@ -3,6 +3,8 @@ import type { ChangeEvent, MouseEvent as ReactMouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
   activeFrameOf,
+  activeAnimationOf,
+  activeAssetOf,
   activeLayerOf,
   atlasMetadata,
   blankFrame,
@@ -22,6 +24,7 @@ import {
   qualityReport,
   replaceGlobalColor as replaceProjectColor,
   rotate90Selection,
+  syncActiveAnimationMeta,
   selectionBounds,
   SIZE,
   slug,
@@ -286,6 +289,8 @@ function App() {
   const [replaceTo, setReplaceTo] = useState("#000000");
   const [previewFrame, setPreviewFrame] = useState(0);
   const frame = activeFrameOf(project);
+  const activeAsset = activeAssetOf(project);
+  const activeAnimation = activeAnimationOf(project);
   const frameIndex = activeFrameIndex(project);
   const layerIndex = activeLayerIndexOf(frame);
   const report = useMemo(
@@ -706,9 +711,46 @@ function App() {
       mutator(f.layers[i]);
     }, false);
   }
+  function setActiveAsset(id: string) {
+    updateProject((p) => {
+      const asset = p.assets.find((item) => item.id === id);
+      if (!asset) return;
+      p.activeAssetId = asset.id;
+      p.activeAnimationId = asset.animations[0].id;
+      p.activeFrameId = asset.animations[0].frames[0]?.id || "";
+    }, false);
+  }
+  function setActiveAnimation(id: string) {
+    updateProject((p) => {
+      const asset = activeAssetOf(p);
+      const animation = asset.animations.find((item) => item.id === id);
+      if (!animation) return;
+      p.activeAnimationId = animation.id;
+      p.activeFrameId = animation.frames[0]?.id || "";
+    }, false);
+  }
+  function addAnimation() {
+    updateProject((p) => {
+      const asset = activeAssetOf(p);
+      const direction = p.godot.direction;
+      const frame = blankFrame(`Frame 1`);
+      const animation = {
+        id: uid(),
+        name: `anim_${asset.animations.length + 1}_${direction.toLowerCase()}`,
+        direction,
+        fps: p.godot.fps,
+        loop: p.godot.loop,
+        frames: [frame],
+      };
+      asset.animations.push(animation);
+      p.activeAnimationId = animation.id;
+      p.activeFrameId = frame.id;
+    }, true, "project.change", { operation: "animation.add" });
+  }
   function setGodotField(k: keyof Project["godot"], v: Project["godot"][keyof Project["godot"]]) {
     updateProject((p) => {
       p.godot = { ...p.godot, [k]: v };
+      syncActiveAnimationMeta(p);
     }, false);
   }
   function setBackgroundField(
@@ -849,6 +891,7 @@ function App() {
       if (Array.isArray(colors) && colors.length)
         updateProject((p) => {
           p.palette = [...new Set(colors.map((c) => String(c).toLowerCase()))];
+          activeAssetOf(p).palette = p.palette;
         }, false);
     });
   }
@@ -1230,6 +1273,38 @@ function App() {
         </div>
 
         <h2>Godot / Unity</h2>
+        <label>
+          Asset ativo{" "}
+          <select
+            value={project.activeAssetId}
+            onChange={(e) => setActiveAsset(e.target.value)}
+          >
+            {project.assets.map((asset) => (
+              <option key={asset.id} value={asset.id}>
+                {asset.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Animação ativa{" "}
+          <select
+            value={project.activeAnimationId}
+            onChange={(e) => setActiveAnimation(e.target.value)}
+          >
+            {activeAsset.animations.map((animation) => (
+              <option key={animation.id} value={animation.id}>
+                {animation.name} · {animation.direction}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button onClick={addAnimation}>+ animação</button>
+        <div className="status">
+          Modelo: {project.assets.length} asset(s) ·{" "}
+          {activeAsset.animations.length} animação(ões) ·{" "}
+          {activeAnimation.frames.length} frame(s)
+        </div>
         <label>
           Asset{" "}
           <input

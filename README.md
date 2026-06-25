@@ -64,7 +64,7 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 
 ## O que foi atualizado nesta versão
 
-- `shared/pixel-core.ts` virou o núcleo comum: schema, normalização, RLE compacto, geração heurística, edição, paleta, QA, metadata Godot/Unity e composição RGBA.
+- `shared/pixel-core.ts` virou o núcleo comum: schema v2 com assets/animações/direções, normalização, migração de projetos antigos, RLE compacto, geração heurística, edição, paleta, QA, metadata Godot/Unity e composição RGBA.
 - Bridge reescrita com escrita atômica, fila de escrita, projeto em formato compacto no disco, leitura expandida para o editor, body limit e bind local em `127.0.0.1`.
 - Camada `server/ai/provider.ts`: usa provider local por padrão e aceita um provider HTTP externo via `PIXEL_AI_ENDPOINT` / `PIXEL_AI_API_KEY`.
 - MCP ganhou ferramentas reais de workflow: geração, edição por seleção, variação, recolor, limite de paleta, preview PNG base64, spritesheet PNG base64 e pacote Godot.
@@ -83,6 +83,9 @@ npm run runtime:reset    # faz backup e recria projeto/db vazios
 - `recolor_palette`
 - `limit_palette`
 - `extend_animation`
+- `set_active_asset`
+- `set_active_animation`
+- `create_animation`
 - `get_preview_png`
 - `get_spritesheet_png`
 - `export_godot_asset`

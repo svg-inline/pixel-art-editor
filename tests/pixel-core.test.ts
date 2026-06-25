@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activeAnimationOf,
+  activeAssetOf,
   atlasMetadata,
   blankLayer,
   colorsUsed,
@@ -43,6 +45,12 @@ test("normalizes legacy layer projects and compact RLE pixels", () => {
   assert.equal(project.frames[0].layers[0].pixels[indexOf(0, 0)], "#abcdef");
   assert.equal(project.godot.direction, "W");
   assert.equal(project.godot.fps, 60);
+  assert.equal(project.schemaVersion, 2);
+  assert.equal(project.assets.length, 1);
+  assert.equal(activeAssetOf(project).animations.length, 1);
+  assert.equal(activeAnimationOf(project).frames, project.frames);
+  assert.deepEqual(project.frames[0].pivot, { x: 128, y: 128 });
+  assert.deepEqual(project.frames[0].hitboxes, []);
 });
 
 test("reports shared colors and QA warnings consistently", () => {
@@ -95,12 +103,62 @@ test("generates common Godot and atlas metadata from normalized projects", () =>
 
   assert.equal(godot.asset, "hero_knight");
   assert.equal(godot.animations[0].frames, 2);
+  assert.equal(godot.animations[0].direction, "W");
   assert.equal(
     godot.files.spritesheet,
     "res://assets/hero_knight/spritesheets/hero_knight_idle_west_sheet.png",
   );
   assert.equal(atlas.meta.size.w, SIZE * 2);
   assert.equal(atlas.frames.idle_west_01.duration, 250);
+});
+
+test("normalizes v2 assets, animations, pivot and hitboxes", () => {
+  const project = expandProject({
+    activeAssetId: "hero",
+    activeAnimationId: "walk_s",
+    assets: [
+      {
+        id: "hero",
+        name: "Hero",
+        palette: ["#ABCDEF"],
+        animations: [
+          {
+            id: "idle_n",
+            name: "idle_n",
+            direction: "N",
+            fps: 4,
+            loop: true,
+            frames: [{ id: "idle-1", name: "Idle" }],
+          },
+          {
+            id: "walk_s",
+            name: "walk_s",
+            direction: "S",
+            fps: 8,
+            loop: false,
+            frames: [
+              {
+                id: "walk-1",
+                name: "Walk",
+                duration: 120,
+                pivot: { x: 127, y: 190 },
+                hitboxes: [{ id: "body", name: "Body", x: 100, y: 90, w: 24, h: 40 }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(project.godot.asset, "Hero");
+  assert.equal(project.godot.animation, "walk_s");
+  assert.equal(project.godot.direction, "S");
+  assert.equal(project.godot.loop, false);
+  assert.equal(project.frames[0].id, "walk-1");
+  assert.deepEqual(project.frames[0].pivot, { x: 127, y: 190 });
+  assert.equal(project.frames[0].hitboxes[0].name, "Body");
+  assert.deepEqual(project.palette, ["#abcdef"]);
 });
 
 test("prompt parser honors explicit animation and direction fields", () => {

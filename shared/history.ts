@@ -158,6 +158,10 @@ function stripPixels(project: Project) {
   delete p.revision;
   for (const frame of p.frames || [])
     for (const layer of frame.layers || []) layer.pixels = "__pixels__";
+  for (const asset of p.assets || [])
+    for (const animation of asset.animations || [])
+      for (const frame of animation.frames || [])
+        for (const layer of frame.layers || []) layer.pixels = "__pixels__";
   return p;
 }
 

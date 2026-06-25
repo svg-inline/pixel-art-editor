@@ -7,6 +7,8 @@ import { z } from "zod";
 import { loadLocalEnv } from "./load-env.ts";
 import {
   activeFrameOf,
+  activeAnimationOf,
+  activeAssetOf,
   atlasMetadata,
   blankFrame,
   blankLayer,
@@ -34,6 +36,7 @@ import {
   setPixel,
   SIZE,
   slug,
+  syncActiveAnimationMeta,
   uid,
   unityMetadata,
   type Direction,
@@ -205,6 +208,74 @@ server.tool("duplicate_frame", "Duplica o frame ativo.", {}, async () => {
   save("frame.duplicate");
   return ok("Frame duplicado.");
 });
+
+server.tool(
+  "set_active_asset",
+  "Seleciona asset por nome ou id.",
+  { asset: z.string() },
+  async ({ asset }) => {
+    reload();
+    const found = project.assets.find((item) => item.id === asset || item.name === asset);
+    if (!found) throw new Error("Asset não encontrado");
+    project.activeAssetId = found.id;
+    project.activeAnimationId = found.animations[0].id;
+    project.activeFrameId = found.animations[0].frames[0]?.id || "";
+    save("project.change", { operation: "set_active_asset", asset });
+    return ok(`Asset ativo: ${found.name}`);
+  },
+);
+
+server.tool(
+  "set_active_animation",
+  "Seleciona animação por nome/id e direção opcional.",
+  {
+    animation: z.string(),
+    direction: z.enum(["N", "NE", "E", "SE", "S", "SW", "W", "NW"]).optional(),
+  },
+  async ({ animation, direction }) => {
+    reload();
+    const asset = activeAssetOf(project);
+    const found = asset.animations.find(
+      (item) =>
+        (item.id === animation || item.name === animation) &&
+        (!direction || item.direction === direction),
+    );
+    if (!found) throw new Error("Animação não encontrada");
+    project.activeAnimationId = found.id;
+    project.activeFrameId = found.frames[0]?.id || "";
+    save("project.change", { operation: "set_active_animation", animation, direction });
+    return ok(`Animação ativa: ${found.name} ${found.direction}`);
+  },
+);
+
+server.tool(
+  "create_animation",
+  "Cria animação no asset ativo com direção/fps/loop.",
+  {
+    name: z.string(),
+    direction: z.enum(["N", "NE", "E", "SE", "S", "SW", "W", "NW"]).default("S"),
+    fps: z.number().int().min(1).max(60).default(6),
+    loop: z.boolean().default(true),
+  },
+  async ({ name, direction, fps, loop }) => {
+    reload();
+    const asset = activeAssetOf(project);
+    const frame = blankFrame("Frame 1");
+    const animation = {
+      id: uid(),
+      name,
+      direction: direction as Direction,
+      fps,
+      loop,
+      frames: [frame],
+    };
+    asset.animations.push(animation);
+    project.activeAnimationId = animation.id;
+    project.activeFrameId = frame.id;
+    save("project.change", { operation: "create_animation", name, direction, fps, loop });
+    return ok(`Animação criada: ${name} ${direction}`);
+  },
+);
 
 server.tool(
   "set_active_frame",
@@ -413,6 +484,7 @@ server.tool(
       fps,
       loop,
     };
+    syncActiveAnimationMeta(project);
     save("project.change", {
       operation: "set_godot_metadata",
       asset,

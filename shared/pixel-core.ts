@@ -32,12 +32,19 @@ export type Layer = {
   opacity: number;
   pixels: PixelArray | RlePixels;
 };
+export type Point = { x: number; y: number };
+export type Hitbox = Selection & {
+  id: string;
+  name: string;
+};
 export type Frame = {
   id: string;
   name: string;
   duration: number;
   layers: Layer[];
   activeLayerId: string;
+  pivot: Point;
+  hitboxes: Hitbox[];
 };
 export type GodotMeta = {
   asset: string;
@@ -46,14 +53,39 @@ export type GodotMeta = {
   fps: number;
   loop: boolean;
 };
+export type Animation = {
+  id: string;
+  name: string;
+  direction: Direction;
+  fps: number;
+  loop: boolean;
+  frames: Frame[];
+};
+export type ExportProfile = {
+  id: string;
+  name: string;
+  engine: "godot" | "unity" | "generic";
+  pixelsPerUnit?: number;
+};
+export type Asset = {
+  id: string;
+  name: string;
+  palette: string[];
+  animations: Animation[];
+  exportProfiles: ExportProfile[];
+};
 export type BackgroundMode = "transparent" | "color";
 export type ProjectBackground = {
   mode: BackgroundMode;
   color: string;
 };
 export type Project = {
+  schemaVersion: 2;
   size: number;
   revision: number;
+  assets: Asset[];
+  activeAssetId: string;
+  activeAnimationId: string;
   frames: Frame[];
   activeFrameId: string;
   palette: string[];
@@ -110,6 +142,8 @@ export function blankFrame(name = "Frame 1"): Frame {
     duration: 100,
     layers: [layer],
     activeLayerId: layer.id,
+    pivot: { x: Math.floor(SIZE / 2), y: Math.floor(SIZE / 2) },
+    hitboxes: [],
   };
 }
 
@@ -153,6 +187,138 @@ export function compactPixels(input: any): RlePixels {
   return { encoding: "rle", size: PIXEL_COUNT, runs };
 }
 
+function normalizePalette(input: any) {
+  return Array.isArray(input) && input.length
+    ? [...new Set(input.map((c: any) => normHex(c)).filter(Boolean))]
+    : DEFAULT_PALETTE;
+}
+
+function normalizeDirection(input: any, fallback: Direction = "W"): Direction {
+  return (DIRECTIONS as readonly string[]).includes(String(input || ""))
+    ? (String(input) as Direction)
+    : fallback;
+}
+
+function normalizeFrame(frame: any, frameIndex: number): Frame {
+  const layers =
+    Array.isArray(frame?.layers) && frame.layers.length
+      ? frame.layers
+      : [blankLayer("Base")];
+  const normalizedLayers = layers.map((layer: any, layerIndex: number) => ({
+    id: layer?.id || uid(),
+    name: String(layer?.name || `Layer ${layerIndex + 1}`),
+    visible: layer?.visible !== false,
+    opacity: clamp(
+      Number.isFinite(Number(layer?.opacity)) ? Number(layer.opacity) : 1,
+      0,
+      1,
+    ),
+    pixels: expandPixels(layer?.pixels),
+  }));
+  const activeLayerId = normalizedLayers.some(
+    (l: Layer) => l.id === frame?.activeLayerId,
+  )
+    ? frame.activeLayerId
+    : normalizedLayers[0].id;
+  const pivot = {
+    x: clamp(
+      Math.round(Number(frame?.pivot?.x ?? Math.floor(SIZE / 2))),
+      0,
+      SIZE - 1,
+    ),
+    y: clamp(
+      Math.round(Number(frame?.pivot?.y ?? Math.floor(SIZE / 2))),
+      0,
+      SIZE - 1,
+    ),
+  };
+  const hitboxes = Array.isArray(frame?.hitboxes)
+    ? frame.hitboxes.map((hitbox: any, hitboxIndex: number) => ({
+        id: hitbox?.id || uid(),
+        name: String(hitbox?.name || `Hitbox ${hitboxIndex + 1}`),
+        x: clamp(Math.round(Number(hitbox?.x || 0)), 0, SIZE - 1),
+        y: clamp(Math.round(Number(hitbox?.y || 0)), 0, SIZE - 1),
+        w: clamp(Math.round(Number(hitbox?.w || 1)), 1, SIZE),
+        h: clamp(Math.round(Number(hitbox?.h || 1)), 1, SIZE),
+      }))
+    : [];
+  return {
+    id: frame?.id || uid(),
+    name: String(frame?.name || `Frame ${frameIndex + 1}`),
+    duration: clamp(Math.round(Number(frame?.duration || 100)), 1, 5000),
+    layers: normalizedLayers,
+    activeLayerId,
+    pivot,
+    hitboxes,
+  };
+}
+
+function normalizeAnimation(
+  animation: any,
+  animationIndex: number,
+  fallbackGodot?: Partial<GodotMeta>,
+): Animation {
+  const fallbackDirection = normalizeDirection(fallbackGodot?.direction, "W");
+  const direction = normalizeDirection(animation?.direction, fallbackDirection);
+  const frames =
+    Array.isArray(animation?.frames) && animation.frames.length
+      ? animation.frames
+      : [blankFrame()];
+  return {
+    id: animation?.id || uid(),
+    name: String(
+      animation?.name ||
+        fallbackGodot?.animation ||
+        `animation_${animationIndex + 1}`,
+    ),
+    direction,
+    fps: clamp(
+      Math.round(Number(animation?.fps ?? fallbackGodot?.fps ?? 6)),
+      1,
+      60,
+    ),
+    loop: animation?.loop ?? fallbackGodot?.loop ?? true,
+    frames: frames.map(normalizeFrame),
+  };
+}
+
+function normalizeAsset(asset: any, assetIndex: number, fallbackGodot?: GodotMeta): Asset {
+  const animations =
+    Array.isArray(asset?.animations) && asset.animations.length
+      ? asset.animations
+      : [
+          {
+            name: fallbackGodot?.animation || "idle_w",
+            direction: fallbackGodot?.direction || "W",
+            fps: fallbackGodot?.fps || 6,
+            loop: fallbackGodot?.loop !== false,
+            frames: Array.isArray(asset?.frames) ? asset.frames : undefined,
+          },
+        ];
+  return {
+    id: asset?.id || uid(),
+    name: String(asset?.name || fallbackGodot?.asset || `Asset ${assetIndex + 1}`),
+    palette: normalizePalette(asset?.palette),
+    animations: animations.map((animation: any, i: number) =>
+      normalizeAnimation(animation, i, fallbackGodot),
+    ),
+    exportProfiles:
+      Array.isArray(asset?.exportProfiles) && asset.exportProfiles.length
+        ? asset.exportProfiles.map((profile: any, profileIndex: number) => ({
+            id: profile?.id || uid(),
+            name: String(profile?.name || `Profile ${profileIndex + 1}`),
+            engine:
+              profile?.engine === "unity" || profile?.engine === "generic"
+                ? profile.engine
+                : "godot",
+            pixelsPerUnit: Number.isFinite(Number(profile?.pixelsPerUnit))
+              ? Number(profile.pixelsPerUnit)
+              : SIZE,
+          }))
+        : [{ id: uid(), name: "Godot", engine: "godot", pixelsPerUnit: SIZE }],
+  };
+}
+
 export function expandProject(input: any): Project {
   const raw =
     input?.format === "pixel-art-compact-v1" && input.project
@@ -180,48 +346,8 @@ export function expandProject(input: any): Project {
     ];
     delete p.layers;
   }
-  p.frames = p.frames.map((frame: any, frameIndex: number) => {
-    const layers =
-      Array.isArray(frame.layers) && frame.layers.length
-        ? frame.layers
-        : [blankLayer("Base")];
-    const normalizedLayers = layers.map((layer: any, layerIndex: number) => ({
-      id: layer?.id || uid(),
-      name: String(layer?.name || `Layer ${layerIndex + 1}`),
-      visible: layer?.visible !== false,
-      opacity: clamp(
-        Number.isFinite(Number(layer?.opacity)) ? Number(layer.opacity) : 1,
-        0,
-        1,
-      ),
-      pixels: expandPixels(layer?.pixels),
-    }));
-    const activeLayerId = normalizedLayers.some(
-      (l: Layer) => l.id === frame.activeLayerId,
-    )
-      ? frame.activeLayerId
-      : normalizedLayers[0].id;
-    return {
-      id: frame.id || uid(),
-      name: String(frame.name || `Frame ${frameIndex + 1}`),
-      duration: clamp(Math.round(Number(frame.duration || 100)), 1, 5000),
-      layers: normalizedLayers,
-      activeLayerId,
-    };
-  });
-  p.activeFrameId = p.frames.some((f: Frame) => f.id === p.activeFrameId)
-    ? p.activeFrameId
-    : p.frames[0].id;
-  p.palette =
-    Array.isArray(p.palette) && p.palette.length
-      ? [...new Set(p.palette.map((c: any) => normHex(c)).filter(Boolean))]
-      : DEFAULT_PALETTE;
   const g = p.godot || {};
-  const direction = (DIRECTIONS as readonly string[]).includes(
-    String(g.direction || "W"),
-  )
-    ? (String(g.direction || "W") as Direction)
-    : "W";
+  const direction = normalizeDirection(g.direction, "W");
   p.godot = {
     asset: String(g.asset || "pixel_asset"),
     animation: String(g.animation || `idle_${direction.toLowerCase()}`),
@@ -229,6 +355,50 @@ export function expandProject(input: any): Project {
     fps: clamp(Math.round(Number(g.fps || 6)), 1, 60),
     loop: g.loop !== false,
   } satisfies GodotMeta;
+  p.palette = normalizePalette(p.palette);
+  const assetsSource =
+    Array.isArray(p.assets) && p.assets.length
+      ? p.assets
+      : [
+          {
+            id: p.assetId,
+            name: p.godot.asset,
+            palette: p.palette,
+            animations: [
+              {
+                id: p.animationId,
+                name: p.godot.animation,
+                direction: p.godot.direction,
+                fps: p.godot.fps,
+                loop: p.godot.loop,
+                frames: p.frames,
+              },
+            ],
+          },
+        ];
+  p.assets = assetsSource.map((asset: any, i: number) =>
+    normalizeAsset(asset, i, p.godot),
+  );
+  const activeAsset = p.assets.find((a: Asset) => a.id === p.activeAssetId) || p.assets[0];
+  p.activeAssetId = activeAsset.id;
+  const activeAnimation =
+    activeAsset.animations.find((a: Animation) => a.id === p.activeAnimationId) ||
+    activeAsset.animations.find((a: Animation) => a.name === p.godot.animation) ||
+    activeAsset.animations[0];
+  p.activeAnimationId = activeAnimation.id;
+  p.frames = activeAnimation.frames;
+  p.activeFrameId = p.frames.some((f: Frame) => f.id === p.activeFrameId)
+    ? p.activeFrameId
+    : p.frames[0].id;
+  p.palette = activeAsset.palette.length ? activeAsset.palette : p.palette;
+  p.godot = {
+    asset: activeAsset.name,
+    animation: activeAnimation.name,
+    direction: activeAnimation.direction,
+    fps: activeAnimation.fps,
+    loop: activeAnimation.loop,
+  } satisfies GodotMeta;
+  p.schemaVersion = 2;
   p.background = normalizeBackground(p.background);
   p.quality = p.quality || {};
   return p as Project;
@@ -238,14 +408,55 @@ export const normalizeProject = expandProject;
 export function compactProject(input: any) {
   const p = expandProject(input) as any;
   const project = clone(p);
-  for (const frame of project.frames) {
-    for (const layer of frame.layers) {
-      layer.pixels = compactPixels(layer.pixels);
-    }
-  }
+  const compactFrame = (frame: any) => {
+    for (const layer of frame.layers) layer.pixels = compactPixels(layer.pixels);
+  };
+  for (const asset of project.assets || [])
+    for (const animation of asset.animations || [])
+      for (const frame of animation.frames || []) compactFrame(frame);
+  project.frames =
+    project.assets
+      ?.find((asset: Asset) => asset.id === project.activeAssetId)
+      ?.animations?.find(
+        (animation: Animation) => animation.id === project.activeAnimationId,
+      )?.frames || project.frames;
   return { format: "pixel-art-compact-v1", version: 1, project };
 }
 
+export function activeAssetOf(project: Project) {
+  return (
+    project.assets.find((asset) => asset.id === project.activeAssetId) ||
+    project.assets[0]
+  );
+}
+export function activeAnimationOf(project: Project) {
+  const asset = activeAssetOf(project);
+  return (
+    asset.animations.find(
+      (animation) => animation.id === project.activeAnimationId,
+    ) || asset.animations[0]
+  );
+}
+export function setActiveAnimationFrames(project: Project, frames: Frame[]) {
+  const animation = activeAnimationOf(project);
+  animation.frames = frames;
+  project.frames = animation.frames;
+  project.activeFrameId = frames.some((frame) => frame.id === project.activeFrameId)
+    ? project.activeFrameId
+    : frames[0]?.id || "";
+  return project;
+}
+export function syncActiveAnimationMeta(project: Project) {
+  const asset = activeAssetOf(project);
+  const animation = activeAnimationOf(project);
+  asset.name = project.godot.asset || asset.name;
+  asset.palette = project.palette?.length ? project.palette : asset.palette;
+  animation.name = project.godot.animation || animation.name;
+  animation.direction = project.godot.direction;
+  animation.fps = project.godot.fps;
+  animation.loop = project.godot.loop;
+  return project;
+}
 export function activeFrameOf(project: Project) {
   return (
     project.frames.find((f) => f.id === project.activeFrameId) ||
@@ -500,6 +711,7 @@ export function replaceGlobalColor(project: Project, from: string, to: string) {
         if (pixels[i] === a) pixels[i] = b;
     }
   project.palette = [...new Set(project.palette.map((c) => (c === a ? b : c)))];
+  activeAssetOf(project).palette = project.palette;
   return project;
 }
 export function limitColors(project: Project, maxColors = 32) {
@@ -517,6 +729,7 @@ export function limitColors(project: Project, maxColors = 32) {
           pixels[i] = fallback;
     }
   project.palette = allowed;
+  activeAssetOf(project).palette = project.palette;
   return project;
 }
 export function countFalseCheckerboard(project: Project) {
@@ -915,8 +1128,6 @@ function generateObjectProject(
   ];
   frame.activeLayerId = frame.layers[3].id;
   drawObjectTemplate(kind, frame.layers, prompt);
-  project.frames = [frame];
-  project.activeFrameId = frame.id;
   project.godot = {
     asset: objectAssetName(kind, prompt),
     animation: "idle",
@@ -924,8 +1135,11 @@ function generateObjectProject(
     fps: 6,
     loop: true,
   };
+  syncActiveAnimationMeta(project);
+  setActiveAnimationFrames(project, [frame]);
   const centered = centerObject(project);
   centered.palette = colorsUsed(centered).map(([color]) => color);
+  activeAssetOf(centered).palette = centered.palette;
   centered.quality = qualityReport(centered, 16);
   return expandProject(centered);
 }
@@ -939,8 +1153,6 @@ export function generatePixelArtFromPrompt(
 
   const spec = animationSpec(prompt);
   const project = expandProject(baseProject || {});
-  project.frames = [];
-  project.activeFrameId = "";
   project.godot = {
     ...project.godot,
     animation: spec.animation,
@@ -948,6 +1160,8 @@ export function generatePixelArtFromPrompt(
     fps: spec.fps,
     loop: spec.kind !== "death",
   };
+  syncActiveAnimationMeta(project);
+  const frames: Frame[] = [];
   const c = paletteForPrompt(prompt);
   for (let i = 0; i < spec.frames; i++) {
     const frame = blankFrame(`Frame ${i + 1}`);
@@ -1020,12 +1234,13 @@ export function generatePixelArtFromPrompt(
         drawRect(detail, cx + lx * 27, cy + 10, 12, 18, c.metal);
       }
     }
-    project.frames.push(frame);
-    if (!project.activeFrameId) project.activeFrameId = frame.id;
+    frames.push(frame);
   }
+  setActiveAnimationFrames(project, frames);
   project.palette = [
     ...new Set([...Object.values(c), ...DEFAULT_PALETTE]),
   ].filter(Boolean);
+  activeAssetOf(project).palette = project.palette;
   project.quality = qualityReport(project, 32);
   return expandProject(project);
 }
@@ -1119,10 +1334,30 @@ export function extendAnimation(projectInput: any, totalFrames = 8): Project {
 
 export function godotMetadata(projectInput: any) {
   const project = expandProject(projectInput);
+  const activeAsset = activeAssetOf(project);
   const asset = slug(project.godot.asset),
     anim = slug(project.godot.animation);
+  const animations = activeAsset.animations.map((animation) => ({
+    id: animation.id,
+    name: slug(animation.name),
+    direction: animation.direction,
+    fps: animation.fps,
+    loop: animation.loop,
+    frames: animation.frames.length,
+    layout: "horizontal",
+    frame_rects: animation.frames.map((frame, i) => ({
+      x: i * SIZE,
+      y: 0,
+      w: SIZE,
+      h: SIZE,
+      duration: frame.duration || Math.round(1000 / animation.fps),
+      pivot: frame.pivot,
+      hitboxes: frame.hitboxes,
+    })),
+  }));
   return {
     asset,
+    active_animation: anim,
     engine: "godot",
     godot_version: "4.x",
     frame_width: SIZE,
@@ -1140,23 +1375,7 @@ export function godotMetadata(projectInput: any) {
       atlas: `res://assets/${asset}/metadata/${asset}_${anim}.atlas.json`,
       spriteframes: `res://assets/${asset}/${asset}.spriteframes.tres`,
     },
-    animations: [
-      {
-        name: anim,
-        direction: project.godot.direction,
-        fps: project.godot.fps,
-        loop: project.godot.loop,
-        frames: project.frames.length,
-        layout: "horizontal",
-        frame_rects: project.frames.map((frame, i) => ({
-          x: i * SIZE,
-          y: 0,
-          w: SIZE,
-          h: SIZE,
-          duration: frame.duration || Math.round(1000 / project.godot.fps),
-        })),
-      },
-    ],
+    animations,
   };
 }
 export function atlasMetadata(projectInput: any) {
@@ -1175,6 +1394,8 @@ export function atlasMetadata(projectInput: any) {
         {
           frame: { x: i * SIZE, y: 0, w: SIZE, h: SIZE },
           duration: frame.duration || Math.round(1000 / project.godot.fps),
+          pivot: frame.pivot,
+          hitboxes: frame.hitboxes,
         },
       ]),
     ),
@@ -1193,13 +1414,15 @@ export function unityMetadata(projectInput: any) {
     compression: "None",
     spriteMode: "Multiple",
     sheet: `${asset}_${anim}_sheet.png`,
-    frames: project.frames.map((_, i) => ({
+    frames: project.frames.map((frame, i) => ({
       name: `${anim}_${i}`,
       x: i * SIZE,
       y: 0,
       width: SIZE,
       height: SIZE,
-      pivot: { x: 0.5, y: 0.5 },
+      pivot: { x: frame.pivot.x / SIZE, y: frame.pivot.y / SIZE },
+      duration: frame.duration || Math.round(1000 / project.godot.fps),
+      hitboxes: frame.hitboxes,
     })),
   };
 }
