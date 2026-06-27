@@ -860,6 +860,59 @@ const server = http.createServer(async (req, res) => {
         })),
       );
     }
+    // Per-asset Godot metadata — does NOT mutate the active asset
+    if (
+      url.pathname.startsWith("/api/godot/asset/") &&
+      url.pathname.endsWith("/metadata") &&
+      req.method === "GET"
+    ) {
+      const assetId = url.pathname.slice(
+        "/api/godot/asset/".length,
+        -"/metadata".length,
+      );
+      const project = readProject();
+      const asset = project.assets.find(
+        (a) => a.id === assetId || slug(a.name) === assetId,
+      );
+      if (!asset) return json(req, res, 404, { error: "asset_not_found" });
+      const assetProject = expandProject({
+        ...project,
+        activeAssetId: asset.id,
+        activeAnimationId: asset.animations[0]?.id ?? project.activeAnimationId,
+        activeFrameId:
+          asset.animations[0]?.frames[0]?.id ?? project.activeFrameId,
+      });
+      return json(req, res, 200, godotMetadata(assetProject));
+    }
+    // Per-asset Godot spritesheet PNG — does NOT mutate the active asset
+    if (
+      url.pathname.startsWith("/api/godot/asset/") &&
+      url.pathname.endsWith("/spritesheet.png") &&
+      req.method === "GET"
+    ) {
+      const assetId = url.pathname.slice(
+        "/api/godot/asset/".length,
+        -"/spritesheet.png".length,
+      );
+      const project = readProject();
+      const asset = project.assets.find(
+        (a) => a.id === assetId || slug(a.name) === assetId,
+      );
+      if (!asset) return json(req, res, 404, { error: "asset_not_found" });
+      const assetProject = expandProject({
+        ...project,
+        activeAssetId: asset.id,
+        activeAnimationId: asset.animations[0]?.id ?? project.activeAnimationId,
+        activeFrameId:
+          asset.animations[0]?.frames[0]?.id ?? project.activeFrameId,
+      });
+      return png(
+        req,
+        res,
+        renderGodotAssetSpritesheetPng(assetProject),
+        `${slug(asset.name)}_sheet.png`,
+      );
+    }
     return json(req, res, 404, { error: "not_found" });
   } catch (e: any) {
     if (e instanceof RevisionConflictError)
