@@ -30,7 +30,12 @@ import {
   unityMetadata,
   type Project,
 } from "../shared/pixel-core.ts";
-import { ProjectDiffSchema, type ProjectDiff } from "../shared/schema.ts";
+import {
+  ProjectDiffSchema,
+  ProjectInputSchema,
+  ProjectSchema,
+  type ProjectDiff,
+} from "../shared/schema.ts";
 import {
   AiOperationSchema,
   createAiProvider,
@@ -121,7 +126,7 @@ const SelectionSchema = z
   .optional();
 const ProjectPostSchema = z
   .object({
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     source: z.string().optional(),
     addHistory: z.boolean().optional(),
@@ -137,7 +142,7 @@ const AiPromptSchema = z
   .object({
     prompt: z.string().default(""),
     operation: AiOperationSchema.optional(),
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     selection: SelectionSchema,
     layer: z.string().optional(),
@@ -149,7 +154,7 @@ const AiPromptSchema = z
 const EditSelectionSchema = z
   .object({
     prompt: z.string().default(""),
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     selection: SelectionSchema,
     layer: z.string().optional(),
@@ -157,7 +162,7 @@ const EditSelectionSchema = z
   .passthrough();
 const RecolorSchema = z
   .object({
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     from: HexColorSchema,
     to: HexColorSchema,
@@ -165,14 +170,14 @@ const RecolorSchema = z
   .passthrough();
 const LimitColorsSchema = z
   .object({
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     maxColors: z.number().int().min(2).max(256).default(32),
   })
   .passthrough();
 const VariationSchema = z
   .object({
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     variant: z.string().optional(),
     prompt: z.string().optional(),
@@ -180,7 +185,7 @@ const VariationSchema = z
   .passthrough();
 const ExtendAnimationSchema = z
   .object({
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
     totalFrames: z.number().int().min(1).max(64).default(8),
   })
@@ -195,7 +200,7 @@ const LoginSchema = z
 const GalleryPostSchema = z
   .object({
     name: z.string().optional(),
-    project: z.any().optional(),
+    project: ProjectInputSchema.optional(),
   })
   .passthrough();
 const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -228,6 +233,13 @@ async function writeProject(
       throw new RevisionConflictError(options.expectedRevision, current);
     }
     const project = expandProject(projectInput);
+    const _projectValidation = ProjectSchema.safeParse(project);
+    if (!_projectValidation.success) {
+      const _issues = _projectValidation.error.issues
+        .map((i) => `${i.path.join(".") || "project"}: ${i.message}`)
+        .join("; ");
+      throw new Error(`invalid_project_${_issues}`);
+    }
     savedProject = repository.saveProject(project, {
       addHistory,
       historyType: options.historyType,

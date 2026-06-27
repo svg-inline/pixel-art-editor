@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PixelArray, RlePixels } from "./model.ts";
 
 export const HexColorSchema = z
   .string()
@@ -13,6 +14,182 @@ export const PixelChangeSchema = z.object({
   after: PixelSchema,
 });
 
+// ─── Core geometric types ─────────────────────────────────────────────────────
+
+export const DirectionSchema = z.enum([
+  "N",
+  "NE",
+  "E",
+  "SE",
+  "S",
+  "SW",
+  "W",
+  "NW",
+] as const);
+
+export const BoxKindSchema = z.enum(["hitbox", "hurtbox", "attackbox"]);
+
+export const PointSchema = z.object({
+  x: z.number().int().min(0).max(255),
+  y: z.number().int().min(0).max(255),
+});
+
+export const HitboxSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  kind: BoxKindSchema,
+  x: z.number().int().min(0).max(255),
+  y: z.number().int().min(0).max(255),
+  w: z.number().int().min(1).max(256),
+  h: z.number().int().min(1).max(256),
+});
+
+// ─── Pixel data ───────────────────────────────────────────────────────────────
+
+export const RleRunSchema = z.tuple([
+  z.number().int().nonnegative(),
+  z.string().nullable(),
+]);
+
+export const RlePixelsSchema = z.object({
+  encoding: z.literal("rle"),
+  size: z.number().int().positive(),
+  runs: z.array(RleRunSchema),
+});
+
+/** Accepts expanded pixel arrays and RLE-encoded compact pixels.
+ * Per-element hex validation is skipped for performance; trust expandPixels(). */
+export const PixelsDataSchema = z.custom<PixelArray | RlePixels>(
+  (val) => {
+    if (Array.isArray(val)) return true;
+    if (
+      val !== null &&
+      typeof val === "object" &&
+      (val as Record<string, unknown>).encoding === "rle" &&
+      typeof (val as Record<string, unknown>).size === "number" &&
+      Array.isArray((val as Record<string, unknown>).runs)
+    )
+      return true;
+    return false;
+  },
+  { message: "pixels must be a pixel array or RLE pixel data" },
+);
+
+// ─── Layer ────────────────────────────────────────────────────────────────────
+
+export const LayerSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  visible: z.boolean(),
+  opacity: z.number().min(0).max(1),
+  pixels: PixelsDataSchema,
+});
+
+// ─── Frame ────────────────────────────────────────────────────────────────────
+
+export const FrameSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  duration: z.number().int().min(1).max(5000),
+  layers: z.array(LayerSchema).min(1),
+  activeLayerId: z.string().min(1),
+  pivot: PointSchema,
+  hitboxes: z.array(HitboxSchema),
+});
+
+// ─── Animation ────────────────────────────────────────────────────────────────
+
+export const AnimationSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  direction: DirectionSchema,
+  fps: z.number().int().min(1).max(60),
+  loop: z.boolean(),
+  frames: z.array(FrameSchema).min(1).max(64),
+});
+
+// ─── Export profile ───────────────────────────────────────────────────────────
+
+export const ExportProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  engine: z.enum(["godot", "unity", "generic"]),
+  pixelsPerUnit: z.number().positive().optional(),
+});
+
+// ─── Asset ────────────────────────────────────────────────────────────────────
+
+export const AssetSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  palette: z.array(HexColorSchema).min(1).max(256),
+  animations: z.array(AnimationSchema).min(1).max(64),
+  exportProfiles: z.array(ExportProfileSchema).min(1),
+});
+
+// ─── Godot metadata ───────────────────────────────────────────────────────────
+
+export const GodotMetaSchema = z.object({
+  asset: z.string().min(1),
+  animation: z.string().min(1),
+  direction: DirectionSchema,
+  fps: z.number().int().min(1).max(60),
+  loop: z.boolean(),
+});
+
+// ─── Project background ───────────────────────────────────────────────────────
+
+export const ProjectBackgroundSchema = z.object({
+  mode: z.enum(["transparent", "color"]),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+});
+
+// ─── Full normalized project ──────────────────────────────────────────────────
+
+export const ProjectSchema = z.object({
+  schemaVersion: z.literal(2),
+  size: z.literal(256),
+  revision: z.number().int().nonnegative(),
+  assets: z.array(AssetSchema).min(1),
+  activeAssetId: z.string().min(1),
+  activeAnimationId: z.string().min(1),
+  frames: z.array(FrameSchema).min(1),
+  activeFrameId: z.string().min(1),
+  palette: z.array(HexColorSchema).min(1).max(256),
+  godot: GodotMetaSchema,
+  background: ProjectBackgroundSchema,
+  quality: z.record(z.string(), z.unknown()).optional(),
+});
+
+// ─── Loose project input (bridge / frontend / AI) ─────────────────────────────
+
+/**
+ * Validates that a project payload is a structurally sound object.
+ * Rejects non-objects, wrong array types and invalid revision numbers.
+ * Does NOT enforce pixel-level or deep sub-object rules;
+ * always pass through expandProject() before using as a Project.
+ */
+export const ProjectInputSchema = z
+  .object({
+    format: z.string().optional(),
+    version: z.number().optional(),
+    project: z.record(z.string(), z.unknown()).optional(),
+    schemaVersion: z.number().int().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    assets: z.array(z.unknown()).optional(),
+    frames: z.array(z.unknown()).optional(),
+    palette: z.array(z.unknown()).optional(),
+    godot: z.record(z.string(), z.unknown()).optional(),
+    background: z.record(z.string(), z.unknown()).optional(),
+    size: z.number().int().optional(),
+    activeAssetId: z.string().optional(),
+    activeAnimationId: z.string().optional(),
+    activeFrameId: z.string().optional(),
+  })
+  .passthrough();
+
+// ─── Diff operations ──────────────────────────────────────────────────────────
+
 export const PixelsChangedOperationSchema = z.object({
   type: z.literal("pixels.changed"),
   frameId: z.string().min(1),
@@ -24,7 +201,7 @@ export const LayerAddedOperationSchema = z.object({
   type: z.literal("layer.added"),
   frameId: z.string().min(1),
   index: z.number().int().nonnegative(),
-  layer: z.any(),
+  layer: LayerSchema,
   activeLayerIdBefore: z.string(),
   activeLayerIdAfter: z.string(),
 });
@@ -33,7 +210,7 @@ export const LayerRemovedOperationSchema = z.object({
   type: z.literal("layer.removed"),
   frameId: z.string().min(1),
   index: z.number().int().nonnegative(),
-  layer: z.any(),
+  layer: LayerSchema,
   activeLayerIdBefore: z.string(),
   activeLayerIdAfter: z.string(),
 });
@@ -44,21 +221,21 @@ export const FrameUpdatedOperationSchema = z.object({
   before: z.object({
     name: z.string(),
     duration: z.number().int().min(1).max(5000),
-    pivot: z.any().optional(),
-    hitboxes: z.array(z.any()).optional(),
+    pivot: PointSchema.optional(),
+    hitboxes: z.array(HitboxSchema).optional(),
   }),
   after: z.object({
     name: z.string(),
     duration: z.number().int().min(1).max(5000),
-    pivot: z.any().optional(),
-    hitboxes: z.array(z.any()).optional(),
+    pivot: PointSchema.optional(),
+    hitboxes: z.array(HitboxSchema).optional(),
   }),
 });
 
 export const ProjectReplacedOperationSchema = z.object({
   type: z.literal("project.replaced"),
-  before: z.any(),
-  after: z.any(),
+  before: ProjectInputSchema,
+  after: ProjectInputSchema,
 });
 
 export const ProjectSettingsChangedOperationSchema = z.object({
@@ -68,8 +245,8 @@ export const ProjectSettingsChangedOperationSchema = z.object({
     activeAnimationId: z.string().optional(),
     activeFrameId: z.string().optional(),
     palette: z.array(HexColorSchema).max(256).optional(),
-    godot: z.any().optional(),
-    background: z.any().optional(),
+    godot: GodotMetaSchema.optional(),
+    background: ProjectBackgroundSchema.optional(),
     quality: z.record(z.string(), z.unknown()).optional(),
   }),
 });
@@ -79,7 +256,7 @@ export const FramesReplacedOperationSchema = z.object({
   assetId: z.string().min(1),
   animationId: z.string().min(1),
   activeFrameId: z.string().optional(),
-  frames: z.array(z.any()).min(1).max(64),
+  frames: z.array(FrameSchema).min(1).max(64),
 });
 
 export const AssetAnimationsReplacedOperationSchema = z.object({
@@ -87,7 +264,7 @@ export const AssetAnimationsReplacedOperationSchema = z.object({
   assetId: z.string().min(1),
   activeAnimationId: z.string().optional(),
   activeFrameId: z.string().optional(),
-  animations: z.array(z.any()).min(1).max(64),
+  animations: z.array(AnimationSchema).min(1).max(64),
 });
 
 export const ProjectDiffOperationSchema = z.discriminatedUnion("type", [
@@ -123,3 +300,12 @@ export const ProjectDiffSchema = z.object({
 export type ProjectDiffOperation = z.infer<typeof ProjectDiffOperationSchema>;
 export type ProjectDiff = z.infer<typeof ProjectDiffSchema>;
 export type McpCommand = z.infer<typeof McpCommandSchema>;
+
+// ─── Inferred types from strict schemas ──────────────────────────────────────
+
+export type ValidatedProject = z.infer<typeof ProjectSchema>;
+export type ValidatedAsset = z.infer<typeof AssetSchema>;
+export type ValidatedAnimation = z.infer<typeof AnimationSchema>;
+export type ValidatedFrame = z.infer<typeof FrameSchema>;
+export type ValidatedLayer = z.infer<typeof LayerSchema>;
+export type ValidatedHitbox = z.infer<typeof HitboxSchema>;

@@ -1,8 +1,8 @@
 # TASK-007 — Fortalecer schemas Zod e contratos de dados
 
-Prioridade: P1  
-Área: Schemas / Segurança / MCP  
-Tipo: Hardening técnico  
+Prioridade: P1
+Área: Schemas / Segurança / MCP
+Tipo: Hardening técnico
 Status inicial: Backlog
 
 ## Objetivo
@@ -29,25 +29,25 @@ O projeto usa Zod, mas ainda há pontos permissivos com `z.any()` ou payloads fr
 
 ## Checklist
 
-- [ ] Inventariar todos os `z.any()` e casts relacionados a projeto/diff/export.
-- [ ] Criar schema explícito para `Project`.
-- [ ] Criar schema explícito para `Asset`.
-- [ ] Criar schema explícito para `Animation`.
-- [ ] Criar schema explícito para `Frame`.
-- [ ] Criar schema explícito para `Layer`.
-- [ ] Criar schema explícito para `Patch`/`Diff`.
-- [ ] Criar schema explícito para `Pivot`, `Hitbox`, `Hurtbox`, `Attackbox`.
-- [ ] Validar entrada e saída de IA antes de aplicar no projeto.
-- [ ] Adicionar testes com payload inválido e payload válido.
-- [ ] Garantir mensagens de erro úteis para frontend/MCP.
+- [x] Inventariar todos os `z.any()` e casts relacionados a projeto/diff/export.
+- [x] Criar schema explícito para `Project`.
+- [x] Criar schema explícito para `Asset`.
+- [x] Criar schema explícito para `Animation`.
+- [x] Criar schema explícito para `Frame`.
+- [x] Criar schema explícito para `Layer`.
+- [x] Criar schema explícito para `Patch`/`Diff`.
+- [x] Criar schema explícito para `Pivot`, `Hitbox`, `Hurtbox`, `Attackbox`.
+- [x] Validar entrada e saída de IA antes de aplicar no projeto.
+- [x] Adicionar testes com payload inválido e payload válido.
+- [x] Garantir mensagens de erro úteis para frontend/MCP.
 
 ## Critérios de aceite
 
-- [ ] Payload inválido vindo da IA não é aplicado silenciosamente.
-- [ ] Bridge rejeita projeto inválido com erro claro.
-- [ ] MCP retorna erro estruturado para parâmetros inválidos.
-- [ ] Exports só recebem projeto normalizado e validado.
-- [ ] Testes cobrem pelo menos 5 casos inválidos críticos.
+- [x] Payload inválido vindo da IA não é aplicado silenciosamente.
+- [x] Bridge rejeita projeto inválido com erro claro.
+- [x] MCP retorna erro estruturado para parâmetros inválidos.
+- [x] Exports só recebem projeto normalizado e validado.
+- [x] Testes cobrem pelo menos 5 casos inválidos críticos.
 
 ## O que não deve ser feito
 

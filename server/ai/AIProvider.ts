@@ -16,6 +16,7 @@ import {
   type Project,
   type Selection,
 } from "../../shared/pixel-core.ts";
+import { ProjectInputSchema, ProjectSchema } from "../../shared/schema.ts";
 
 export const AiOperationSchema = z.enum([
   "generate",
@@ -65,9 +66,24 @@ const PixelSchema = z
   .nullable();
 const PixelChangeSchema = z
   .object({
-    index: z.number().int().min(0).max(SIZE * SIZE - 1).optional(),
-    x: z.number().int().min(0).max(SIZE - 1).optional(),
-    y: z.number().int().min(0).max(SIZE - 1).optional(),
+    index: z
+      .number()
+      .int()
+      .min(0)
+      .max(SIZE * SIZE - 1)
+      .optional(),
+    x: z
+      .number()
+      .int()
+      .min(0)
+      .max(SIZE - 1)
+      .optional(),
+    y: z
+      .number()
+      .int()
+      .min(0)
+      .max(SIZE - 1)
+      .optional(),
     color: PixelSchema,
   })
   .passthrough();
@@ -85,8 +101,8 @@ export const AiProviderResponseSchema = z
   .object({
     provider: z.string().optional(),
     model: z.string().optional(),
-    project: z.any().optional(),
-    frames: z.array(z.any()).optional(),
+    project: ProjectInputSchema.optional(),
+    frames: z.array(z.record(z.string(), z.unknown())).optional(),
     diff: z.union([PixelDiffSchema, z.array(PixelDiffSchema)]).optional(),
     pngBase64: z.string().optional(),
     imageBase64: z.string().optional(),
@@ -136,7 +152,9 @@ export function projectFromAiResponse(
     return postProcessAiProject({ ...base, frames: response.frames }, input);
   }
   if (response.diff) {
-    const diffs = Array.isArray(response.diff) ? response.diff : [response.diff];
+    const diffs = Array.isArray(response.diff)
+      ? response.diff
+      : [response.diff];
     const project = expandProject(base);
     for (const diff of diffs) applyPixelDiff(project, diff);
     return postProcessAiProject(project, input);
@@ -166,10 +184,21 @@ export function postProcessAiProject(projectInput: unknown, input: AiRequest) {
   else if (input.maxColors) project = limitColors(project, input.maxColors);
   if (input.maxColors) project = limitColors(project, input.maxColors);
   project.quality = qualityReport(project, input.maxColors || 32);
-  return expandProject(project);
+  const _normalized = expandProject(project);
+  const _aiValidation = ProjectSchema.safeParse(_normalized);
+  if (!_aiValidation.success) {
+    const _issues = _aiValidation.error.issues
+      .map((i) => `${i.path.join(".") || "project"}: ${i.message}`)
+      .join("; ");
+    throw new Error(`ai_output_invalid_project_${_issues}`);
+  }
+  return _normalized;
 }
 
-function applyPixelDiff(project: Project, diff: z.infer<typeof PixelDiffSchema>) {
+function applyPixelDiff(
+  project: Project,
+  diff: z.infer<typeof PixelDiffSchema>,
+) {
   const frame =
     (diff.frameId && project.frames.find((item) => item.id === diff.frameId)) ||
     project.frames[diff.frameIndex || 0] ||
@@ -228,7 +257,9 @@ function preserveOutsideSelection(
 }
 
 function quantizeToPalette(project: Project, palette: string[]) {
-  const normalized = [...new Set(palette.filter(isHex).map((c) => c.toLowerCase()))];
+  const normalized = [
+    ...new Set(palette.filter(isHex).map((c) => c.toLowerCase())),
+  ];
   if (!normalized.length) return project;
   for (const frame of project.frames)
     for (const layer of frame.layers) {
