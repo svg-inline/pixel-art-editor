@@ -3,7 +3,7 @@
 Prioridade: P1  
 Área: IA / MCP / Bridge  
 Tipo: Feature estrutural  
-Status inicial: Backlog
+Status: Concluída
 
 ## Objetivo
 
@@ -32,34 +32,34 @@ O projeto já aceita `PIXEL_AI_ENDPOINT` e possui fallback local. Isso é bom, m
 
 ## Checklist
 
-- [ ] Definir contrato do provider externo: request, response, erros e timeout.
-- [ ] Separar `heuristic` de `external-ai` na UI e logs.
-- [ ] Validar prompt, projeto atual e parâmetros antes de enviar ao provider.
-- [ ] Normalizar output recebido do provider.
-- [ ] Converter output de IA em patch/diff, não snapshot cego.
-- [ ] Gerar preview visual antes de aplicar.
-- [ ] Exigir accept/reject explícito no frontend.
-- [ ] Registrar prompt, provider, timestamp, diff e resultado no histórico.
-- [ ] Criar fallback seguro quando provider falhar.
-- [ ] Adicionar limite de tamanho/tempo para resposta de IA.
-- [ ] Adicionar testes com provider fake.
+- [x] Definir contrato do provider externo: request, response, erros e timeout.
+- [x] Separar `heuristic` de `external-ai` na UI e logs.
+- [x] Validar prompt, projeto atual e parâmetros antes de enviar ao provider.
+- [x] Normalizar output recebido do provider.
+- [x] Converter output de IA em patch/diff, não snapshot cego.
+- [x] Gerar preview visual antes de aplicar.
+- [x] Exigir accept/reject explícito no frontend.
+- [x] Registrar prompt, provider, timestamp, diff e resultado no histórico.
+- [x] Criar fallback seguro quando provider falhar.
+- [x] Adicionar limite de tamanho/tempo para resposta de IA.
+- [x] Adicionar testes com provider fake.
 
 ## Critérios de aceite
 
-- [ ] Usuário consegue saber se a geração veio do provider real ou fallback heurístico.
-- [ ] Nenhuma resposta de IA altera o projeto sem preview e aceite.
-- [ ] Diff aplicado é validado por schema.
-- [ ] Falha do provider não corrompe projeto.
-- [ ] Histórico mostra operação de IA de forma auditável.
-- [ ] Testes cobrem accept, reject, timeout e payload inválido.
+- [x] Usuário consegue saber se a geração veio do provider real ou fallback heurístico.
+- [x] Nenhuma resposta de IA altera o projeto sem preview e aceite.
+- [x] Diff aplicado é validado por schema.
+- [x] Falha do provider não corrompe projeto.
+- [x] Histórico mostra operação de IA de forma auditável.
+- [x] Testes cobrem accept, reject, timeout e payload inválido.
 
 ## O que não deve ser feito
 
-- [ ] Não chamar fallback heurístico de IA real.
-- [ ] Não aplicar JSON bruto do provider direto no estado.
-- [ ] Não salvar chave de IA no frontend.
-- [ ] Não travar UI esperando provider indefinidamente.
-- [ ] Não remover o fallback local, pois ele é útil para desenvolvimento.
+- [x] Não chamar fallback heurístico de IA real.
+- [x] Não aplicar JSON bruto do provider direto no estado.
+- [x] Não salvar chave de IA no frontend.
+- [x] Não travar UI esperando provider indefinidamente.
+- [x] Não remover o fallback local, pois ele é útil para desenvolvimento.
 
 ## Estados esperados na UI
 
@@ -84,3 +84,26 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Implementação
+
+- Contrato detalhado em [`docs/ai-provider-contract.md`](../../ai-provider-contract.md).
+- Provider HTTP com timeout, limite de bytes, erros tipados e validação de
+  request/response.
+- Fallback server-side identificado como `heuristic`, com causa rastreável.
+- Endpoints de IA geram `ProjectDiff` e preview; inclusive o endpoint legado não
+  aplica mais alterações diretamente.
+- Auditoria SQLite registra previews de bridge e MCP e seus resultados de
+  aceite, rejeição ou falha.
+- UI expõe todos os estados esperados, origem, diff, fallback e avisos.
+
+Nenhum arquivo do addon Godot foi alterado; a validação adicional no editor
+Godot não se aplica a esta implementação.
+
+## Resultado da validação
+
+- `npm run typecheck`: passou.
+- `npm test`: 73 testes passaram.
+- `npm run build`: build Vite de produção passou.
+- `npm run typecheck:strict`: passou.
+- E2E focado em preview de IA: accept e reject passaram no Chromium.

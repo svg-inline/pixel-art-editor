@@ -89,3 +89,45 @@ test("ProjectRepository stores gallery project thumbnails separately", () => {
     repo.close();
   }
 });
+
+test("ProjectRepository audits AI preview accept and reject outcomes", () => {
+  const dir = tempDir();
+  const repo = new ProjectRepository(path.join(dir, "editor.sqlite"));
+  try {
+    const at = "2026-06-27T12:00:00.000Z";
+    repo.recordAiAudit({
+      id: "accepted-preview",
+      at,
+      prompt: "crie uma espada",
+      operation: "generate",
+      provider: "fake-ai",
+      providerKind: "external-ai",
+      result: "preview_ready",
+      warnings: [],
+    });
+    repo.recordAiAudit({
+      id: "rejected-preview",
+      at: "2026-06-27T12:00:01.000Z",
+      prompt: "mude a cor",
+      operation: "edit",
+      provider: "local-heuristic",
+      providerKind: "heuristic",
+      result: "preview_ready",
+      warnings: ["heuristic_provider_not_real_ai"],
+    });
+
+    assert.equal(repo.updateAiAudit("accepted-preview", "accepted"), true);
+    assert.equal(repo.updateAiAudit("rejected-preview", "rejected"), true);
+    const audit = repo.listAiAudits();
+    assert.equal(
+      audit.find((entry) => entry.id === "accepted-preview")?.result,
+      "accepted",
+    );
+    assert.equal(
+      audit.find((entry) => entry.id === "rejected-preview")?.result,
+      "rejected",
+    );
+  } finally {
+    repo.close();
+  }
+});

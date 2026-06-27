@@ -35,6 +35,7 @@ import {
 import type {
   AiOperation,
   AiPreviewState,
+  AiFlowState,
   Clip,
   GalleryItem,
   GridDensity,
@@ -87,6 +88,8 @@ function App() {
   const [aiOperation, setAiOperation] = useState<AiOperation>("generate");
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [aiPreview, setAiPreview] = useState<AiPreviewState | null>(null);
+  const [aiFlowState, setAiFlowState] = useState<AiFlowState>("idle");
+  const [aiError, setAiError] = useState<string | null>(null);
   const [remoteHistory, setRemoteHistory] = useState<RemoteHistoryItem[]>([]);
   const [maxColors, setMaxColors] = useState(32);
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
@@ -161,6 +164,8 @@ function App() {
     aiPreview,
     setProject,
     setAiPreview,
+    setAiFlowState,
+    setAiError,
     setGallery,
     setRemoteHistory,
     setAutosaveStatus,
@@ -304,6 +309,8 @@ function App() {
           applyPrompt={bridgeActions.applyPrompt}
           loadMcpPreviews={bridgeActions.loadMcpPreviews}
           aiPreview={aiPreview}
+          aiFlowState={aiFlowState}
+          aiError={aiError}
           aiPreviewRef={aiPreviewRef}
           acceptAiPreview={bridgeActions.acceptAiPreview}
           rejectAiPreview={bridgeActions.rejectAiPreview}

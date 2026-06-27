@@ -112,6 +112,28 @@ function save(
     source: "mcp",
     command: diff.command,
   });
+  const providerKind = params?.providerKind;
+  if (providerKind === "heuristic" || providerKind === "external-ai") {
+    repository.recordAiAudit({
+      id: pending.id,
+      at: pending.at,
+      prompt: prompt || "",
+      operation: tool,
+      provider: String(params?.provider || "unknown"),
+      providerKind,
+      model: typeof params?.model === "string" ? params.model : undefined,
+      result: "preview_ready",
+      diff,
+      summary: preview.summary,
+      warnings: Array.isArray(params?.warnings)
+        ? params.warnings.map(String)
+        : [],
+      error:
+        typeof (params?.fallback as any)?.code === "string"
+          ? String((params?.fallback as any).code)
+          : undefined,
+    });
+  }
   lastProposal = {
     previewId: pending.id,
     diff,
@@ -588,6 +610,8 @@ server.tool(
       provider: result.provider,
       providerKind: result.providerKind,
       model: result.model,
+      warnings: result.warnings,
+      fallback: result.fallback,
     });
     return ok(
       `Preview aplicado via ${result.provider}. Frames: ${project.frames.length}, animação: ${project.godot.animation}`,
@@ -608,6 +632,8 @@ server.tool(
       provider: result.provider,
       providerKind: result.providerKind,
       model: result.model,
+      warnings: result.warnings,
+      fallback: result.fallback,
     });
     return ok(`Prompt aplicado via ${result.provider}. Frames: ${project.frames.length}`);
   },
@@ -680,6 +706,8 @@ server.tool(
       provider: result.provider,
       providerKind: result.providerKind,
       model: result.model,
+      warnings: result.warnings,
+      fallback: result.fallback,
     });
     return ok(`Edição aplicada via ${result.provider}.`);
   },
@@ -713,6 +741,8 @@ server.tool(
       provider: result.provider,
       providerKind: result.providerKind,
       model: result.model,
+      warnings: result.warnings,
+      fallback: result.fallback,
     });
     return ok(`Seleção editada via ${result.provider}.`);
   },
@@ -746,6 +776,8 @@ server.tool(
       provider: result.provider,
       providerKind: result.providerKind,
       model: result.model,
+      warnings: result.warnings,
+      fallback: result.fallback,
     });
     return ok(`Objeto/sujeito substituído via ${result.provider}.`);
   },

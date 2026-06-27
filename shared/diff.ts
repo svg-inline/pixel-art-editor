@@ -3,6 +3,7 @@ import {
   activeLayerOf,
   clone,
   colorsUsed,
+  compactProject,
   expandPixels,
   expandProject,
   PIXEL_COUNT,
@@ -100,6 +101,7 @@ function jsonEqual(a: unknown, b: unknown) {
 
 function createStructuredOperations(before: Project, after: Project) {
   const operations: ProjectDiffOperation[] = [];
+  const compactAfter = compactProject(after).project as Project;
   const beforeSettings = settingsSnapshot(before);
   const afterSettings = settingsSnapshot(after);
   if (!jsonEqual(beforeSettings, afterSettings)) {
@@ -111,6 +113,9 @@ function createStructuredOperations(before: Project, after: Project) {
 
   const beforeAsset = activeAsset(before);
   const afterAsset = after.assets.find((asset) => asset.id === beforeAsset.id);
+  const compactAfterAsset = compactAfter.assets.find(
+    (asset) => asset.id === beforeAsset.id,
+  );
   if (!afterAsset) return operations;
 
   const beforeAnimation = activeAnimation(before);
@@ -121,23 +126,28 @@ function createStructuredOperations(before: Project, after: Project) {
     beforeAsset.animations.length !== afterAsset.animations.length ||
     !afterAnimation
   ) {
+    if (!compactAfterAsset) return operations;
     operations.push({
       type: "asset.animations.replaced",
       assetId: afterAsset.id,
       activeAnimationId: after.activeAnimationId,
       activeFrameId: after.activeFrameId,
-      animations: clone(afterAsset.animations),
+      animations: clone(compactAfterAsset.animations),
     });
     return operations;
   }
 
   if (!jsonEqual(beforeAnimation.frames, afterAnimation.frames)) {
+    const compactAfterAnimation = compactAfterAsset?.animations.find(
+      (animation) => animation.id === beforeAnimation.id,
+    );
+    if (!compactAfterAnimation) return operations;
     operations.push({
       type: "frames.replaced",
       assetId: afterAsset.id,
       animationId: afterAnimation.id,
       activeFrameId: after.activeFrameId,
-      frames: clone(afterAnimation.frames),
+      frames: clone(compactAfterAnimation.frames),
     });
   }
   return operations;

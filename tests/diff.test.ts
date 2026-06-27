@@ -10,6 +10,7 @@ import {
   setPixel,
 } from "../shared/pixel-core.ts";
 import {
+  MAX_DIFF_BYTES,
   applyProjectDiff,
   createProjectDiff,
   previewProjectDiff,
@@ -92,6 +93,7 @@ test("ProjectDiff represents generated art as structural operations, not whole p
   });
 
   assert.ok(diff);
+  assert.ok(JSON.stringify(diff).length < MAX_DIFF_BYTES);
   assert.equal(diff.operations.some((op) => op.type === "project.replaced"), false);
   assert.ok(
     diff.operations.some(

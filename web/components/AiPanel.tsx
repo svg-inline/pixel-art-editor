@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type {
   AiOperation,
+  AiFlowState,
   AiPreviewState,
   BridgeStatus,
   GalleryItem,
@@ -19,6 +20,8 @@ type AiPanelProps = {
   applyPrompt: () => void;
   loadMcpPreviews: () => void;
   aiPreview: AiPreviewState | null;
+  aiFlowState: AiFlowState;
+  aiError: string | null;
   aiPreviewRef: RefObject<HTMLCanvasElement | null>;
   acceptAiPreview: () => void;
   rejectAiPreview: () => void;
@@ -44,6 +47,8 @@ export function AiPanel({
   applyPrompt,
   loadMcpPreviews,
   aiPreview,
+  aiFlowState,
+  aiError,
   aiPreviewRef,
   acceptAiPreview,
   rejectAiPreview,
@@ -56,6 +61,8 @@ export function AiPanel({
   gallery,
   loadGalleryItem,
 }: AiPanelProps) {
+  const busy =
+    aiFlowState === "validating" || aiFlowState === "sending_to_provider";
   return (
     <>
       <h2>IA / MCP</h2>
@@ -66,6 +73,14 @@ export function AiPanel({
         {dirty ? " · alterações pendentes" : ""}
         <br />
         Render: <b>{renderStatsText}</b>
+        <br />
+        Pipeline IA: <b>{aiFlowState}</b>
+        {aiError ? (
+          <>
+            <br />
+            <span role="alert">{aiError}</span>
+          </>
+        ) : null}
       </div>
       <select
         value={aiOperation}
@@ -81,7 +96,9 @@ export function AiPanel({
         onChange={(event) => setPrompt(event.target.value)}
         rows={4}
       />
-      <button onClick={applyPrompt}>Gerar preview</button>
+      <button onClick={applyPrompt} disabled={busy}>
+        {busy ? "Gerando preview…" : "Gerar preview"}
+      </button>
       <button onClick={loadMcpPreviews}>Buscar previews MCP</button>
       {aiPreview ? (
         <div className="ai-preview">
@@ -90,9 +107,9 @@ export function AiPanel({
             Origem: <b>{aiPreview.source === "mcp" ? "MCP" : "IA"}</b>
             <br />
             Provider: <b>{aiPreview.provider}</b>
-            {aiPreview.providerKind === "local"
+            {aiPreview.providerKind === "heuristic"
               ? " · heurístico local"
-              : " · externo"}
+              : " · IA externa"}
             {aiPreview.model ? ` · ${aiPreview.model}` : ""}
             {aiPreview.summary ? (
               <>
@@ -102,6 +119,19 @@ export function AiPanel({
                 {aiPreview.summary.structuralChanges
                   ? ` · ${aiPreview.summary.structuralChanges} estrut.`
                   : ""}
+              </>
+            ) : null}
+            {aiPreview.fallback ? (
+              <>
+                <br />
+                Fallback seguro após falha de {aiPreview.fallback.provider}: {" "}
+                {aiPreview.fallback.code}
+              </>
+            ) : null}
+            {aiPreview.warnings?.length ? (
+              <>
+                <br />
+                Avisos: {aiPreview.warnings.join(" · ")}
               </>
             ) : null}
           </div>
@@ -121,6 +151,8 @@ export function AiPanel({
             <small>
               {item.source || "bridge"} · {item.patches} patch(es) ·{" "}
               {item.pixelChanges} px
+              {item.result ? ` · ${item.result}` : ""}
+              {item.provider ? ` · ${item.provider}` : ""}
             </small>
           </div>
         ))}

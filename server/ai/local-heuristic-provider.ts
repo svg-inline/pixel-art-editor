@@ -8,6 +8,7 @@ import {
 } from "../../shared/pixel-core.ts";
 import {
   postProcessAiProject,
+  validateAiRequest,
   type AiProviderResult,
   type AiRequest,
   type AIProvider,
@@ -15,9 +16,10 @@ import {
 
 export class LocalHeuristicProvider implements AIProvider {
   name = "local-heuristic";
-  kind = "local" as const;
+  kind = "heuristic" as const;
 
-  async generate(input: AiRequest): Promise<AiProviderResult> {
+  async generate(rawInput: AiRequest): Promise<AiProviderResult> {
+    const input = validateAiRequest(rawInput);
     const op = input.operation || "generate";
     const base = expandProject(input.project || {});
     let project = base;

@@ -35,6 +35,7 @@ export type AiConstraints = {
   palette?: string[];
   preserveOutsideSelection?: boolean;
 };
+export type AiProviderKind = "heuristic" | "external-ai";
 export type AiRequest = {
   prompt: string;
   operation?: AiOperation;
@@ -50,15 +51,69 @@ export type AiRequest = {
 export type AiProviderResult = {
   project: Project;
   provider: string;
-  providerKind: "local" | "http";
+  providerKind: AiProviderKind;
   model?: string;
   warnings?: string[];
+  fallback?: {
+    provider: string;
+    code: string;
+  };
 };
 export type AIProvider = {
   name: string;
-  kind: "local" | "http";
+  kind: AiProviderKind;
   generate(input: AiRequest): Promise<AiProviderResult>;
 };
+
+export const MAX_AI_PROMPT_LENGTH = 2_000;
+export const DEFAULT_AI_TIMEOUT_MS = 15_000;
+export const DEFAULT_AI_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+export class AiProviderError extends Error {
+  constructor(
+    public code: string,
+    public recoverable = true,
+    options?: { cause?: unknown },
+  ) {
+    super(code, options);
+    this.name = "AiProviderError";
+  }
+}
+
+const AiSelectionSchema = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    w: z.number().finite(),
+    h: z.number().finite(),
+  })
+  .nullable()
+  .optional();
+
+export const AiRequestSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(MAX_AI_PROMPT_LENGTH),
+    operation: AiOperationSchema.default("generate"),
+    project: z.unknown().optional(),
+    selection: AiSelectionSchema,
+    layer: z.string().trim().min(1).max(128).optional(),
+    from: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    to: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    maxColors: z.number().int().min(2).max(256).optional(),
+    palette: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(256).optional(),
+    constraints: z
+      .object({
+        size: z.number().int().positive().optional(),
+        maxColors: z.number().int().min(2).max(256).optional(),
+        palette: z
+          .array(z.string().regex(/^#[0-9a-fA-F]{6}$/))
+          .max(256)
+          .optional(),
+        preserveOutsideSelection: z.boolean().optional(),
+      })
+      .optional(),
+  })
+  .strict();
 
 const PixelSchema = z
   .string()
@@ -99,14 +154,14 @@ const PixelDiffSchema = z
   .passthrough();
 export const AiProviderResponseSchema = z
   .object({
-    provider: z.string().optional(),
-    model: z.string().optional(),
+    provider: z.string().trim().min(1).max(128).optional(),
+    model: z.string().trim().min(1).max(128).optional(),
     project: ProjectInputSchema.optional(),
     frames: z.array(z.record(z.string(), z.unknown())).optional(),
     diff: z.union([PixelDiffSchema, z.array(PixelDiffSchema)]).optional(),
     pngBase64: z.string().optional(),
     imageBase64: z.string().optional(),
-    warnings: z.array(z.string()).optional(),
+    warnings: z.array(z.string().max(500)).max(50).optional(),
   })
   .passthrough()
   .superRefine((value, ctx) => {
@@ -117,26 +172,63 @@ export const AiProviderResponseSchema = z
     });
   });
 
+export function validateAiRequest(input: AiRequest): AiRequest {
+  const result = AiRequestSchema.safeParse(input);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`)
+      .join("; ");
+    throw new AiProviderError(`ai_request_invalid_${issues}`, false);
+  }
+  const parsed = result.data;
+  const project = expandProject(parsed.project || {});
+  const validation = ProjectSchema.safeParse(project);
+  if (!validation.success) {
+    const issues = validation.error.issues
+      .map((issue) => `${issue.path.join(".") || "project"}: ${issue.message}`)
+      .join("; ");
+    throw new AiProviderError(`ai_request_invalid_project_${issues}`, false);
+  }
+  const normalizedSelection = selectionBounds(parsed.selection) || null;
+  return {
+    ...parsed,
+    prompt: parsed.prompt.trim(),
+    project,
+    selection: normalizedSelection,
+    palette: parsed.palette?.map((color) => color.toLowerCase()),
+    constraints: parsed.constraints
+      ? {
+          ...parsed.constraints,
+          size: SIZE,
+          palette: parsed.constraints.palette?.map((color) =>
+            color.toLowerCase(),
+          ),
+        }
+      : undefined,
+  };
+}
+
 export function buildAiPayload(input: AiRequest) {
-  const project = expandProject(input.project || {});
+  const validated = validateAiRequest(input);
+  const project = expandProject(validated.project || {});
   const palette =
-    input.palette?.filter(isHex).map((color) => color.toLowerCase()) ||
+    validated.palette?.filter(isHex).map((color) => color.toLowerCase()) ||
     project.palette;
   return {
-    prompt: input.prompt || "",
-    operation: input.operation || "generate",
+    prompt: validated.prompt,
+    operation: validated.operation || "generate",
     project: compactProject(project),
-    selection: selectionBounds(input.selection) || null,
-    layer: input.layer,
+    selection: selectionBounds(validated.selection) || null,
+    layer: validated.layer,
     palette,
     constraints: {
-      size: SIZE,
-      maxColors: input.maxColors,
+      maxColors: validated.maxColors,
       palette,
       preserveOutsideSelection:
-        input.operation === "edit_selection" ||
-        input.operation === "replace_subject",
-      ...input.constraints,
+        validated.operation === "edit_selection" ||
+        validated.operation === "replace_subject",
+      ...validated.constraints,
+      size: SIZE,
     },
   };
 }

@@ -57,6 +57,27 @@ export type PendingProjectDiff = {
   project: Project;
   summary: ProjectDiffSummary;
 };
+export type AiAuditResult =
+  | "preview_ready"
+  | "accepted"
+  | "rejected"
+  | "failed_with_recoverable_error";
+export type AiAuditEntry = {
+  id: string;
+  at: string;
+  updatedAt: string;
+  prompt: string;
+  operation: string;
+  provider: string;
+  providerKind: "heuristic" | "external-ai";
+  model?: string;
+  result: AiAuditResult;
+  diff?: ProjectDiff;
+  summary?: ProjectDiffSummary;
+  warnings: string[];
+  error?: string;
+};
+export type AiAuditInput = Omit<AiAuditEntry, "updatedAt">;
 
 const ACTIVE_PROJECT_ID = "active";
 
@@ -270,6 +291,77 @@ export class ProjectRepository {
       .prepare("DELETE FROM pending_diffs WHERE project_id = ? AND id = ?")
       .run(ACTIVE_PROJECT_ID, id);
     return result.changes > 0;
+  }
+
+  recordAiAudit(input: AiAuditInput) {
+    this.ensureActiveProject();
+    const updatedAt = now();
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO ai_audit
+           (id, project_id, at, updated_at, prompt, operation, provider,
+            provider_kind, model, result, diff_json, summary_json,
+            warnings_json, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        ACTIVE_PROJECT_ID,
+        input.at,
+        updatedAt,
+        input.prompt,
+        input.operation,
+        input.provider,
+        input.providerKind,
+        input.model || null,
+        input.result,
+        input.diff ? JSON.stringify(input.diff) : null,
+        input.summary ? JSON.stringify(input.summary) : null,
+        JSON.stringify(input.warnings || []),
+        input.error || null,
+      );
+    return { ...input, updatedAt } satisfies AiAuditEntry;
+  }
+
+  updateAiAudit(id: string, result: AiAuditResult, error?: string) {
+    const update = this.db
+      .prepare(
+        `UPDATE ai_audit
+         SET result = ?, error = ?, updated_at = ?
+         WHERE project_id = ? AND id = ?`,
+      )
+      .run(result, error || null, now(), ACTIVE_PROJECT_ID, id);
+    return update.changes > 0;
+  }
+
+  listAiAudits(): AiAuditEntry[] {
+    this.ensureActiveProject();
+    const rows = this.db
+      .prepare(
+        `SELECT id, at, updated_at, prompt, operation, provider,
+                provider_kind, model, result, diff_json, summary_json,
+                warnings_json, error
+         FROM ai_audit
+         WHERE project_id = ?
+         ORDER BY at DESC
+         LIMIT ?`,
+      )
+      .all(ACTIVE_PROJECT_ID, HISTORY_LIMIT) as any[];
+    return rows.map((row) => ({
+      id: row.id,
+      at: row.at,
+      updatedAt: row.updated_at,
+      prompt: row.prompt,
+      operation: row.operation,
+      provider: row.provider,
+      providerKind: row.provider_kind,
+      model: row.model || undefined,
+      result: row.result,
+      diff: row.diff_json ? JSON.parse(row.diff_json) : undefined,
+      summary: row.summary_json ? JSON.parse(row.summary_json) : undefined,
+      warnings: row.warnings_json ? JSON.parse(row.warnings_json) : [],
+      error: row.error || undefined,
+    }));
   }
 
   upsertUser(input: UserInput) {

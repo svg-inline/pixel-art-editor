@@ -37,6 +37,7 @@ import {
   type ProjectDiff,
 } from "../shared/schema.ts";
 import {
+  AiProviderError,
   AiOperationSchema,
   createAiProvider,
   type AiOperation,
@@ -109,8 +110,10 @@ type AiPreview = {
   prompt: string;
   operation: AiOperation;
   provider: string;
-  providerKind: "local" | "http";
+  providerKind: "heuristic" | "external-ai";
   model?: string;
+  warnings?: string[];
+  fallback?: AiProviderResult["fallback"];
   diff: ProjectDiff;
   project: ReturnType<typeof compactProject>;
 };
@@ -140,7 +143,7 @@ const DiffPreviewPostSchema = z
   .passthrough();
 const AiPromptSchema = z
   .object({
-    prompt: z.string().default(""),
+    prompt: z.string().trim().min(1).max(2_000),
     operation: AiOperationSchema.optional(),
     project: ProjectInputSchema.optional(),
     revision: z.number().int().nonnegative().optional(),
@@ -389,6 +392,8 @@ function aiHistoryParams(
     provider: result.provider,
     providerKind: result.providerKind,
     model: result.model,
+    warnings: result.warnings,
+    fallback: result.fallback,
   };
 }
 async function runAiPrompt(data: z.infer<typeof AiPromptSchema>) {
@@ -406,6 +411,71 @@ async function runAiPrompt(data: z.infer<typeof AiPromptSchema>) {
       ? project.palette
       : colorsUsed(project).map(([color]) => color),
   });
+}
+
+async function createAiPreview(data: z.infer<typeof AiPromptSchema>) {
+  const previewId = id();
+  const at = new Date().toISOString();
+  try {
+    const baseProject = expandProject(data.project || readProject());
+    const result = await runAiPrompt(data);
+    const diff = createProjectDiff(baseProject, result.project, {
+      source: "bridge",
+      tool: "ai-preview",
+      prompt: data.prompt,
+      timestamp: at,
+      params: aiHistoryParams(result, {
+        prompt: data.prompt,
+        operation: (data.operation || "generate") as AiOperation,
+      }),
+    });
+    if (!diff) throw new Error("empty_diff");
+    const preview = previewProjectDiff(baseProject, diff);
+    const item: AiPreview = {
+      id: previewId,
+      at,
+      baseRevision: expectedRevisionFrom(data) ?? readProject().revision,
+      prompt: data.prompt,
+      operation: (data.operation || "generate") as AiOperation,
+      provider: result.provider,
+      providerKind: result.providerKind,
+      model: result.model,
+      warnings: result.warnings,
+      fallback: result.fallback,
+      diff,
+      project: compactProject(preview.project),
+    };
+    aiPreviews.set(item.id, item);
+    repository.recordAiAudit({
+      id: item.id,
+      at: item.at,
+      prompt: item.prompt,
+      operation: item.operation,
+      provider: item.provider,
+      providerKind: item.providerKind,
+      model: item.model,
+      result: "preview_ready",
+      diff: item.diff,
+      summary: preview.summary,
+      warnings: item.warnings || [],
+      error: item.fallback?.code,
+    });
+    return { item, preview };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "ai_preview_failed";
+    repository.recordAiAudit({
+      id: previewId,
+      at,
+      prompt: data.prompt,
+      operation: data.operation || "generate",
+      provider: aiProvider.name,
+      providerKind: aiProvider.kind,
+      result: "failed_with_recoverable_error",
+      warnings: [],
+      error: message,
+    });
+    throw error;
+  }
 }
 
 function watchRepositoryFile(filePath: string) {
@@ -491,52 +561,22 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/ai-prompt" && req.method === "POST") {
       const data = parseBody(await body(req), AiPromptSchema);
-      const result = await runAiPrompt(data);
-      return json(
-        req,
-        res,
-        200,
-        await writeProject(result.project, {
-          expectedRevision: expectedRevisionFrom(data),
-          historyParams: aiHistoryParams(result, {
-            prompt: data.prompt,
-            operation: (data.operation || "generate") as AiOperation,
-          }),
-        }),
-      );
+      const { item, preview } = await createAiPreview(data);
+      return json(req, res, 200, {
+        ...item,
+        status: "preview_ready",
+        project: preview.project,
+        summary: preview.summary,
+      });
     }
     if (url.pathname === "/api/ai-preview" && req.method === "POST") {
       const data = parseBody(await body(req), AiPromptSchema);
-      const baseProject = expandProject(data.project || readProject());
-      const result = await runAiPrompt(data);
-      const diff = createProjectDiff(baseProject, result.project, {
-        source: "bridge",
-        tool: "ai-preview",
-        prompt: data.prompt,
-        params: aiHistoryParams(result, {
-          prompt: data.prompt,
-          operation: (data.operation || "generate") as AiOperation,
-        }),
-      });
-      if (!diff) return json(req, res, 400, { error: "empty_diff" });
-      const diffPreview = previewProjectDiff(baseProject, diff);
-      const aiPreview: AiPreview = {
-        id: id(),
-        at: new Date().toISOString(),
-        baseRevision: expectedRevisionFrom(data) ?? readProject().revision,
-        prompt: data.prompt,
-        operation: (data.operation || "generate") as AiOperation,
-        provider: result.provider,
-        providerKind: result.providerKind,
-        model: result.model,
-        diff,
-        project: compactProject(diffPreview.project),
-      };
-      aiPreviews.set(aiPreview.id, aiPreview);
+      const { item, preview } = await createAiPreview(data);
       return json(req, res, 200, {
-        ...aiPreview,
-        project: diffPreview.project,
-        summary: diffPreview.summary,
+        ...item,
+        status: "preview_ready",
+        project: preview.project,
+        summary: preview.summary,
       });
     }
     if (
@@ -562,14 +602,18 @@ const server = http.createServer(async (req, res) => {
             provider: preview.provider,
             providerKind: preview.providerKind,
             model: preview.model,
+            warnings: preview.warnings,
+            fallback: preview.fallback,
             previewId: preview.id,
             timestamp: preview.at,
             diff: preview.diff,
+            result: "accepted",
           },
           historySource: "bridge",
         },
       );
       aiPreviews.delete(preview.id);
+      repository.updateAiAudit(preview.id, "accepted");
       return json(req, res, 200, saved);
     }
     if (
@@ -578,6 +622,7 @@ const server = http.createServer(async (req, res) => {
     ) {
       const previewId = url.pathname.split("/").pop() || "";
       const existed = aiPreviews.delete(previewId);
+      if (existed) repository.updateAiAudit(previewId, "rejected");
       return json(req, res, existed ? 200 : 404, { ok: existed });
     }
     if (url.pathname === "/api/diff-preview" && req.method === "POST") {
@@ -622,6 +667,7 @@ const server = http.createServer(async (req, res) => {
         },
       );
       repository.deletePendingDiff(previewId);
+      repository.updateAiAudit(previewId, "accepted");
       return json(req, res, 200, saved);
     }
     if (
@@ -630,6 +676,7 @@ const server = http.createServer(async (req, res) => {
     ) {
       const previewId = url.pathname.split("/").pop() || "";
       const existed = repository.deletePendingDiff(previewId);
+      if (existed) repository.updateAiAudit(previewId, "rejected");
       return json(req, res, existed ? 200 : 404, { ok: existed });
     }
     if (url.pathname === "/api/tools/edit-selection" && req.method === "POST") {
@@ -827,30 +874,57 @@ const server = http.createServer(async (req, res) => {
         : json(req, res, 404, { error: "not_found" });
     }
     if (url.pathname === "/api/history" && req.method === "GET") {
+      const projectHistory = repository.listHistory().map((h) => ({
+        id: h.id,
+        at: h.at,
+        command: h.command.type,
+        label: h.command.label,
+        patches: h.patches.length,
+        pixelChanges: h.patches.reduce(
+          (sum, patch) =>
+            patch.type === "pixels.changed"
+              ? sum + patch.changes.length
+              : sum,
+          0,
+        ),
+        source: h.command.source,
+        params: h.command.params || {},
+        diff: h.command.params?.diff,
+        tool: h.command.params?.tool,
+        prompt: h.command.params?.prompt,
+        timestamp: h.command.params?.timestamp || h.at,
+        result: h.command.params?.result,
+      }));
+      const aiHistory = repository.listAiAudits().map((entry) => ({
+        id: `ai:${entry.id}`,
+        at: entry.at,
+        command: "ai.audit",
+        label: entry.operation,
+        patches: entry.diff?.operations.length || 0,
+        pixelChanges: entry.summary?.pixelChanges || 0,
+        source: entry.providerKind,
+        params: {
+          provider: entry.provider,
+          providerKind: entry.providerKind,
+          model: entry.model,
+          warnings: entry.warnings,
+          error: entry.error,
+        },
+        diff: entry.diff,
+        tool: entry.operation,
+        prompt: entry.prompt,
+        timestamp: entry.at,
+        result: entry.result,
+        provider: entry.provider,
+        providerKind: entry.providerKind,
+      }));
       return json(
         req,
         res,
         200,
-        repository.listHistory().map((h) => ({
-          id: h.id,
-          at: h.at,
-          command: h.command.type,
-          label: h.command.label,
-          patches: h.patches.length,
-          pixelChanges: h.patches.reduce(
-            (sum, patch) =>
-              patch.type === "pixels.changed"
-                ? sum + patch.changes.length
-                : sum,
-            0,
-          ),
-          source: h.command.source,
-          params: h.command.params || {},
-          diff: h.command.params?.diff,
-          tool: h.command.params?.tool,
-          prompt: h.command.params?.prompt,
-          timestamp: h.command.params?.timestamp || h.at,
-        })),
+        [...aiHistory, ...projectHistory]
+          .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+          .slice(0, 200),
       );
     }
     // Per-asset Godot metadata — does NOT mutate the active asset
@@ -914,6 +988,15 @@ const server = http.createServer(async (req, res) => {
         current: e.current,
         revision: e.current.revision,
       });
+    if (e instanceof AiProviderError)
+      return json(req, res, e.recoverable ? 502 : 400, {
+        error: e.code,
+        recoverable: e.recoverable,
+      });
+    if (String(e?.message || "").startsWith("invalid_payload_"))
+      return json(req, res, 400, { error: e.message });
+    if (String(e?.message || "").startsWith("body_too_large_"))
+      return json(req, res, 413, { error: e.message });
     return json(req, res, 500, { error: e?.message || "server_error" });
   }
 });

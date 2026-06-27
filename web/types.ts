@@ -36,6 +36,15 @@ export type BridgeStatus =
   | "local-prompt"
   | "conflict";
 
+export type AiFlowState =
+  | "idle"
+  | "validating"
+  | "sending_to_provider"
+  | "preview_ready"
+  | "accepted"
+  | "rejected"
+  | "failed_with_recoverable_error";
+
 export type AutosaveStatus =
   | "idle"
   | "dirty"
@@ -57,8 +66,10 @@ export type AiPreviewState = {
   id?: string;
   project: Project;
   provider: string;
-  providerKind: "local" | "http";
+  providerKind: "heuristic" | "external-ai";
   model?: string;
+  warnings?: string[];
+  fallback?: { provider: string; code: string };
   prompt: string;
   operation: AiOperation;
   source?: "ai" | "mcp";
@@ -80,6 +91,9 @@ export type RemoteHistoryItem = {
   tool?: string;
   prompt?: string;
   timestamp?: string;
+  result?: AiFlowState;
+  provider?: string;
+  providerKind?: "heuristic" | "external-ai";
   patches: number;
   pixelChanges: number;
   params?: Record<string, unknown>;
