@@ -1,5 +1,5 @@
-import { expandProject, SIZE, slug, type Project } from "./model.ts";
 import { activeAssetOf } from "./animation.ts";
+import { expandProject, SIZE, slug } from "./model.ts";
 
 export function godotMetadata(projectInput: any) {
   const project = expandProject(projectInput);
@@ -71,8 +71,8 @@ export function godotMetadata(projectInput: any) {
         frame.hitboxes.map((hitbox) => ({
           animation: animation.name,
           frame: frameIndex,
-          type: hitbox.kind,
           ...hitbox,
+          type: hitbox.kind,
         })),
       ),
     ),

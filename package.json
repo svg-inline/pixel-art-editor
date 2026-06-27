@@ -14,6 +14,7 @@
     "runtime:migrate": "tsx server/runtime-maintenance.ts migrate",
     "runtime:reset": "tsx server/runtime-maintenance.ts reset",
     "typecheck": "tsc --noEmit",
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
     "test": "node --import tsx --test tests/*.test.ts",
     "build": "vite build",
     "pack:clean": "node scripts/pack-clean.mjs",

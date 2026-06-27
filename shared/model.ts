@@ -202,9 +202,15 @@ export function blankFrame(name = "Frame 1"): Frame {
 
 // ─── Normalization helpers (private) ─────────────────────────────────────────
 
-function normalizePalette(input: any) {
+function normalizePalette(input: any): string[] {
   return Array.isArray(input) && input.length
-    ? [...new Set(input.map((c: any) => normHex(c)).filter(Boolean))]
+    ? [
+        ...new Set(
+          input
+            .map((c: any) => normHex(c))
+            .filter((c): c is string => c !== null),
+        ),
+      ]
     : DEFAULT_PALETTE;
 }
 

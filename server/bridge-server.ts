@@ -4,10 +4,15 @@ import path from "node:path";
 import process from "node:process";
 import { URL } from "node:url";
 import { z } from "zod";
-import { loadLocalEnv } from "./load-env.ts";
 import {
-  activeFrameOf,
+  applyProjectDiff,
+  createProjectDiff,
+  previewProjectDiff,
+} from "../shared/diff.ts";
+import { type HistoryCommandName } from "../shared/history.ts";
+import {
   activeAssetOf,
+  activeFrameOf,
   atlasMetadata,
   colorsUsed,
   compactProject,
@@ -25,32 +30,13 @@ import {
   unityMetadata,
   type Project,
 } from "../shared/pixel-core.ts";
-import {
-  type HistoryCommandName,
-} from "../shared/history.ts";
-import {
-  applyProjectDiff,
-  createProjectDiff,
-  previewProjectDiff,
-} from "../shared/diff.ts";
-import {
-  ProjectDiffSchema,
-  type ProjectDiff,
-} from "../shared/schema.ts";
+import { ProjectDiffSchema, type ProjectDiff } from "../shared/schema.ts";
 import {
   AiOperationSchema,
   createAiProvider,
   type AiOperation,
   type AiProviderResult,
 } from "./ai/provider.ts";
-import { encodePngRgba } from "./png.ts";
-import {
-  defaultDbPath,
-  defaultProjectPath,
-  defaultSqlitePath,
-  migrateRuntimeFiles,
-} from "./runtime-files.ts";
-import { ProjectRepository } from "./db.ts";
 import {
   assertBridgeSecurity,
   bridgeSecurityConfig,
@@ -59,6 +45,15 @@ import {
   isTokenValid,
   requestOrigin,
 } from "./bridge-security.ts";
+import { ProjectRepository } from "./db.ts";
+import { loadLocalEnv } from "./load-env.ts";
+import { encodePngRgba } from "./png.ts";
+import {
+  defaultDbPath,
+  defaultProjectPath,
+  defaultSqlitePath,
+  migrateRuntimeFiles,
+} from "./runtime-files.ts";
 
 loadLocalEnv();
 
@@ -249,7 +244,8 @@ async function writeProject(
     () => undefined,
   );
   await writeTask;
-  return savedProject as Project;
+  if (!savedProject) throw new Error("save_project_failed");
+  return savedProject;
 }
 function sendEvent(res: http.ServerResponse, event: string, data: any) {
   res.write(`event: ${event}\n`);
@@ -347,10 +343,12 @@ function renderSpritesheetPng(project: Project) {
 }
 function renderGodotAssetSpritesheetPng(project: Project) {
   const asset = activeAssetOf(project);
-  const width = SIZE * Math.max(
-    1,
-    ...asset.animations.map((animation) => animation.frames.length),
-  );
+  const width =
+    SIZE *
+    Math.max(
+      1,
+      ...asset.animations.map((animation) => animation.frames.length),
+    );
   const height = SIZE * Math.max(1, asset.animations.length);
   const sheet = new Uint8Array(width * height * 4);
   asset.animations.forEach((animation, row) => {
@@ -547,22 +545,25 @@ const server = http.createServer(async (req, res) => {
         return json(req, res, 404, { error: "ai_preview_not_found" });
       const data = parseBody(await body(req), ProjectPostSchema);
       const current = readProject();
-      const saved = await writeProject(applyProjectDiff(current, preview.diff), {
-        expectedRevision: expectedRevisionFrom(data) ?? preview.baseRevision,
-        historyType: "mcp.diff",
-        historyParams: {
-          tool: "ai-preview",
-          operation: preview.operation,
-          prompt: preview.prompt,
-          provider: preview.provider,
-          providerKind: preview.providerKind,
-          model: preview.model,
-          previewId: preview.id,
-          timestamp: preview.at,
-          diff: preview.diff,
+      const saved = await writeProject(
+        applyProjectDiff(current, preview.diff),
+        {
+          expectedRevision: expectedRevisionFrom(data) ?? preview.baseRevision,
+          historyType: "mcp.diff",
+          historyParams: {
+            tool: "ai-preview",
+            operation: preview.operation,
+            prompt: preview.prompt,
+            provider: preview.provider,
+            providerKind: preview.providerKind,
+            model: preview.model,
+            previewId: preview.id,
+            timestamp: preview.at,
+            diff: preview.diff,
+          },
+          historySource: "bridge",
         },
-        historySource: "bridge",
-      });
+      );
       aiPreviews.delete(preview.id);
       return json(req, res, 200, saved);
     }
@@ -597,20 +598,24 @@ const server = http.createServer(async (req, res) => {
         return json(req, res, 404, { error: "mcp_preview_not_found" });
       const data = parseBody(await body(req), ProjectPostSchema);
       const current = readProject();
-      const saved = await writeProject(applyProjectDiff(current, pending.diff), {
-        expectedRevision: expectedRevisionFrom(data) ?? pending.diff.baseRevision,
-        historyType: "mcp.diff",
-        historyParams: {
-          ...(pending.command?.params || {}),
-          tool: pending.command?.tool || "mcp",
-          prompt: pending.command?.prompt,
-          timestamp: pending.command?.timestamp || pending.at,
-          previewId: pending.id,
-          diff: pending.diff,
-          summary: pending.summary,
+      const saved = await writeProject(
+        applyProjectDiff(current, pending.diff),
+        {
+          expectedRevision:
+            expectedRevisionFrom(data) ?? pending.diff.baseRevision,
+          historyType: "mcp.diff",
+          historyParams: {
+            ...(pending.command?.params || {}),
+            tool: pending.command?.tool || "mcp",
+            prompt: pending.command?.prompt,
+            timestamp: pending.command?.timestamp || pending.at,
+            previewId: pending.id,
+            diff: pending.diff,
+            summary: pending.summary,
+          },
+          historySource: pending.source || "mcp",
         },
-        historySource: pending.source || "mcp",
-      });
+      );
       repository.deletePendingDiff(previewId);
       return json(req, res, 200, saved);
     }
@@ -701,10 +706,7 @@ const server = http.createServer(async (req, res) => {
         res,
         200,
         await writeProject(
-          extendAnimation(
-            data.project || readProject(),
-            data.totalFrames,
-          ),
+          extendAnimation(data.project || readProject(), data.totalFrames),
           { expectedRevision: expectedRevisionFrom(data) },
         ),
       );
@@ -771,7 +773,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/export/godot" && req.method === "GET") {
       const data = godotMetadata(readProject());
-      repository.recordExport("godot", "godot.animations.json", "application/json", data);
+      repository.recordExport(
+        "godot",
+        "godot.animations.json",
+        "application/json",
+        data,
+      );
       return json(req, res, 200, data);
     }
     if (url.pathname === "/api/export/atlas" && req.method === "GET") {
