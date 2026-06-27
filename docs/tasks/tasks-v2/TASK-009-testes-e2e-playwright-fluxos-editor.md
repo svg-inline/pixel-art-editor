@@ -3,7 +3,7 @@
 Prioridade: P1  
 Área: Testes / Qualidade  
 Tipo: Cobertura funcional  
-Status inicial: Backlog
+Status: Concluída
 
 ## Objetivo
 
@@ -27,34 +27,34 @@ O projeto tem testes de core/server passando, mas ainda falta validação automa
 
 ## Checklist
 
-- [ ] Instalar e configurar Playwright.
-- [ ] Criar script `test:e2e`.
-- [ ] Criar fixture de projeto pixel art mínimo.
-- [ ] Testar criação de projeto novo.
-- [ ] Testar desenho de pixel no canvas.
-- [ ] Testar criação/renomeação de camada.
-- [ ] Testar criação de frame e preview animado.
-- [ ] Testar seleção + copiar/colar.
-- [ ] Testar preview de IA e reject sem alterar projeto.
-- [ ] Testar preview de IA e accept aplicando patch.
-- [ ] Testar exportação de spritesheet ou PNG.
-- [ ] Testar salvar e reabrir projeto da galeria.
+- [x] Instalar e configurar Playwright.
+- [x] Criar script `test:e2e`.
+- [x] Criar fixture de projeto pixel art mínimo.
+- [x] Testar criação de projeto novo.
+- [x] Testar desenho de pixel no canvas.
+- [x] Testar criação/renomeação de camada.
+- [x] Testar criação de frame e preview animado.
+- [x] Testar seleção + copiar/colar.
+- [x] Testar preview de IA e reject sem alterar projeto.
+- [x] Testar preview de IA e accept aplicando patch.
+- [x] Testar exportação de spritesheet ou PNG.
+- [x] Testar salvar e reabrir projeto da galeria.
 
 ## Critérios de aceite
 
-- [ ] `npm run test:e2e` roda localmente.
-- [ ] Pelo menos 8 fluxos críticos estão cobertos.
-- [ ] Testes não dependem de provider externo de IA real.
-- [ ] Falha de UI mostra screenshot/video ou trace.
-- [ ] Testes podem rodar no CI em modo headless.
+- [x] `npm run test:e2e` roda localmente.
+- [x] Pelo menos 8 fluxos críticos estão cobertos.
+- [x] Testes não dependem de provider externo de IA real.
+- [x] Falha de UI mostra screenshot/video ou trace.
+- [x] Testes podem rodar no CI em modo headless.
 
 ## O que não deve ser feito
 
-- [ ] Não testar detalhes frágeis de CSS como objetivo principal.
-- [ ] Não depender da internet.
-- [ ] Não depender de chave real de IA.
-- [ ] Não usar sleeps fixos longos; preferir waits por estado.
-- [ ] Não substituir testes unitários por E2E.
+- [x] Não testar detalhes frágeis de CSS como objetivo principal.
+- [x] Não depender da internet.
+- [x] Não depender de chave real de IA.
+- [x] Não usar sleeps fixos longos; preferir waits por estado.
+- [x] Não substituir testes unitários por E2E.
 
 ## Fluxos mínimos obrigatórios
 
@@ -75,3 +75,11 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Resultado da validação
+
+- `npm run test:e2e`: 13 testes passando (Chromium headless).
+- `npm run typecheck`: passou.
+- `npm test`: 68 testes passando.
+- `npm run build`: passou.
+- Godot não foi alterado por esta tarefa.

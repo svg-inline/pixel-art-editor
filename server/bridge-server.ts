@@ -205,7 +205,7 @@ const GalleryPostSchema = z
   .passthrough();
 const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 let writeQueue = Promise.resolve();
-let lastMtime = 0;
+const lastMtimeByPath = new Map<string, number>();
 const clients = new Set<http.ServerResponse>();
 const aiPreviews = new Map<string, AiPreview>();
 
@@ -246,9 +246,10 @@ async function writeProject(
       historyParams: options.historyParams,
       historySource: options.historySource || "bridge",
     });
-    lastMtime = fs.existsSync(SQLITE_PATH)
-      ? fs.statSync(SQLITE_PATH).mtimeMs
-      : lastMtime;
+    for (const filePath of [SQLITE_PATH, `${SQLITE_PATH}-wal`]) {
+      if (fs.existsSync(filePath))
+        lastMtimeByPath.set(filePath, fs.statSync(filePath).mtimeMs);
+    }
     broadcastProject(savedProject);
   });
   writeQueue = writeTask.then(
@@ -408,12 +409,14 @@ async function runAiPrompt(data: z.infer<typeof AiPromptSchema>) {
 }
 
 function watchRepositoryFile(filePath: string) {
+  if (fs.existsSync(filePath))
+    lastMtimeByPath.set(filePath, fs.statSync(filePath).mtimeMs);
   fs.watchFile(filePath, { interval: 500 }, () => {
     try {
       if (!fs.existsSync(filePath)) return;
       const stat = fs.statSync(filePath);
-      if (stat.mtimeMs !== lastMtime) {
-        lastMtime = stat.mtimeMs;
+      if (stat.mtimeMs !== lastMtimeByPath.get(filePath)) {
+        lastMtimeByPath.set(filePath, stat.mtimeMs);
         broadcastProject(readProject());
       }
     } catch {}
@@ -422,17 +425,7 @@ function watchRepositoryFile(filePath: string) {
 
 watchRepositoryFile(SQLITE_PATH);
 watchRepositoryFile(`${SQLITE_PATH}-wal`);
-
-fs.watchFile(PROJECT_PATH, { interval: 500 }, () => {
-  try {
-    if (!fs.existsSync(PROJECT_PATH)) return;
-    const stat = fs.statSync(PROJECT_PATH);
-    if (stat.mtimeMs !== lastMtime) {
-      lastMtime = stat.mtimeMs;
-      broadcastProject(readProject());
-    }
-  } catch {}
-});
+watchRepositoryFile(PROJECT_PATH);
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(

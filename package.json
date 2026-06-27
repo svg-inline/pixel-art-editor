@@ -16,6 +16,9 @@
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
     "test": "node --import tsx --test tests/*.test.ts",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:ui": "node scripts/run-e2e.mjs --ui",
+    "test:e2e:debug": "node scripts/run-e2e.mjs --debug",
     "build": "vite build",
     "pack:clean": "node scripts/pack-clean.mjs",
     "preview": "vite preview --host 0.0.0.0"
@@ -23,15 +26,16 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
     "@vitejs/plugin-react": "6.0.3",
-    "vite": "8.1.0",
-    "typescript": "6.0.3",
-    "tsx": "4.22.4",
+    "concurrently": "10.0.3",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "zod": "4.4.3",
-    "concurrently": "10.0.3"
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vite": "8.1.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^26.0.0"
   }
 }

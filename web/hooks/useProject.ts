@@ -77,7 +77,10 @@ export function useProject() {
   ) {
     markDirty();
     const before = cloneProject(projectRef.current);
-    const draft = cloneProject(before);
+    // `frames` é a visão da animação ativa. Um clone estrutural separa
+    // essas duas referências e faz `normalizeProject` descartar mutações feitas
+    // em `draft.frames`. Normalizar a origem recria o vínculo antes da edição.
+    const draft = normalizeProject(projectRef.current);
     const next = normalizeProject(mutator(draft) || draft);
     if (saveHist) commitHistory(before, next, historyType, params);
     projectRef.current = next;
