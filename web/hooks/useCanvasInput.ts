@@ -19,6 +19,7 @@ import {
   renderFrameCached,
   renderFrameFresh,
   renderCacheStats,
+  markLayerDirty,
 } from "../canvas-renderer.ts";
 import {
   activeLayerIndexOf,
@@ -354,7 +355,7 @@ export function useCanvasInput({
       lastRenderStatsUpdateRef.current = now;
       const stats = renderCacheStats();
       setRenderStatsText(
-        `layers ${stats.layerHits}/${stats.layerMisses} · frames ${stats.frameHits}/${stats.frameMisses}`,
+        `layers ${stats.layerHits}/${stats.layerMisses} (${stats.layerPartialRenders} parciais) · frames ${stats.frameHits}/${stats.frameMisses} (${stats.framePartialRenders} parciais)`,
       );
     }
   }
@@ -467,7 +468,6 @@ export function useCanvasInput({
       setColor(picked || color);
       return;
     }
-    markDirty();
     const edit = cloneForActiveLayerEdit(projectRef.current);
     const next = edit.project;
     const frameToEdit = edit.frame;
@@ -476,17 +476,41 @@ export function useCanvasInput({
       showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
     const cellX = Math.floor(x / cellSize) * cellSize;
     const cellY = Math.floor(y / cellSize) * cellSize;
-    const paintCell = (valueFn) => {
+    let dirtyRect: { x: number; y: number; width: number; height: number } | null = null;
+    const paintCell = (valueFn: (x: number, y: number) => string | null) => {
+      let changed = false;
       for (let yy = cellY; yy < Math.min(SIZE, cellY + cellSize); yy++)
-        for (let xx = cellX; xx < Math.min(SIZE, cellX + cellSize); xx++)
-          layer.pixels[idx(xx, yy)] = valueFn(xx, yy);
+        for (let xx = cellX; xx < Math.min(SIZE, cellX + cellSize); xx++) {
+          const pixelIndex = idx(xx, yy);
+          const value = valueFn(xx, yy);
+          if (layer.pixels[pixelIndex] === value) continue;
+          layer.pixels[pixelIndex] = value;
+          changed = true;
+        }
+      if (changed) {
+        dirtyRect = {
+          x: cellX,
+          y: cellY,
+          width: Math.min(SIZE, cellX + cellSize) - cellX,
+          height: Math.min(SIZE, cellY + cellSize) - cellY,
+        };
+      }
     };
     if (tool === "pencil") paintCell(() => color);
     if (tool === "eraser") paintCell(() => null);
     if (tool === "bucket")
-      floodFillFrame(frameToEdit, activeLayerIndexOf(frameToEdit), x, y, color);
+      dirtyRect = floodFillFrame(
+        frameToEdit,
+        activeLayerIndexOf(frameToEdit),
+        x,
+        y,
+        color,
+      );
     if (tool === "dither")
       paintCell((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
+    if (!dirtyRect) return;
+    markDirty();
+    markLayerDirty(layer.id, dirtyRect);
     projectRef.current = next;
     setProject(next);
   }
@@ -545,6 +569,7 @@ export function useCanvasInput({
 
   function onMouseMove(event: ReactMouseEvent<HTMLCanvasElement>) {
     const point = getCell(event);
+    const previousPoint = lastCellRef.current;
     lastCellRef.current = point;
     if (tool === "select" && selectionStart) {
       setSelection({
@@ -559,7 +584,12 @@ export function useCanvasInput({
       setShapePreview({ tool, start: shapeStartRef.current, end: point });
       return;
     }
-    if (drawingRef.current && event.buttons === 1) editAt(point.x, point.y);
+    if (
+      drawingRef.current &&
+      event.buttons === 1 &&
+      (previousPoint?.x !== point.x || previousPoint?.y !== point.y)
+    )
+      editAt(point.x, point.y);
   }
 
   function onMouseUp(event?: ReactMouseEvent<HTMLCanvasElement>) {

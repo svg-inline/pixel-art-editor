@@ -131,6 +131,7 @@ export function normalizeBackground(input: any): ProjectBackground {
   };
 }
 export function clone<T>(v: T): T {
+  if (typeof structuredClone === "function") return structuredClone(v);
   return JSON.parse(JSON.stringify(v));
 }
 

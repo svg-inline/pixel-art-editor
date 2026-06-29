@@ -6,6 +6,7 @@ import {
   isHex,
   selectionBounds,
   SIZE,
+  floodFillPixels,
 } from "../../shared/pixel-core.ts";
 import type {
   Frame,
@@ -63,20 +64,7 @@ export function floodFillFrame(
   const layer = frame.layers[layerIndex];
   const pixels = expandPixels(layer.pixels);
   layer.pixels = pixels;
-  const target = pixels[idx(x, y)];
-  if (target === color) return;
-  const q = [[x, y]];
-  const visited = new Uint8Array(SIZE * SIZE);
-  while (q.length) {
-    const [cx, cy] = q.pop();
-    if (cx < 0 || cy < 0 || cx >= SIZE || cy >= SIZE) continue;
-    const i = idx(cx, cy);
-    if (visited[i]) continue;
-    visited[i] = 1;
-    if (pixels[i] !== target) continue;
-    pixels[i] = color;
-    q.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
-  }
+  return floodFillPixels(pixels, x, y, color);
 }
 
 export function fillBackground(

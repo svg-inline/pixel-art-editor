@@ -1,37 +1,82 @@
 import {
   compositeFrameRgba,
+  diffPixelBounds,
   expandPixels,
+  FULL_CANVAS_RECT,
+  normalizeDirtyRect,
   SIZE,
+  unionDirtyRects,
+  type DirtyRect,
   type Frame,
   type Layer,
+  type PixelArray,
   type ProjectBackground,
 } from "../shared/pixel-core.ts";
 
 type LayerCacheEntry = {
-  signature: string;
   canvas: HTMLCanvasElement;
+  source: Layer["pixels"];
+  pixels: PixelArray;
+  visible: boolean;
+  opacity: number;
+  version: number;
+};
+
+type PreparedLayer = {
+  entry: LayerCacheEntry;
+  dirty: DirtyRect | null;
 };
 
 type FrameCacheEntry = {
-  signature: string;
   canvas: HTMLCanvasElement;
+  layerIds: string[];
+  layerVersions: number[];
+  layerSources: Layer["pixels"][];
+  layerMetadata: string[];
+};
+
+type LayerDirtyChange = {
+  version: number;
+  rect: DirtyRect;
 };
 
 export type RenderStats = {
   layerHits: number;
   layerMisses: number;
+  layerPartialRenders: number;
+  layerPixelsPainted: number;
   frameHits: number;
   frameMisses: number;
+  framePartialRenders: number;
+  framePixelsComposited: number;
 };
 
+const MAX_LAYER_CACHE_ENTRIES = 192;
+const MAX_FRAME_CACHE_ENTRIES = 128;
 const layerCache = new Map<string, LayerCacheEntry>();
 const frameCache = new Map<string, FrameCacheEntry>();
-const stats: RenderStats = {
-  layerHits: 0,
-  layerMisses: 0,
-  frameHits: 0,
-  frameMisses: 0,
-};
+const layerVersions = new Map<string, number>();
+const layerDirtyHistory = new Map<string, LayerDirtyChange[]>();
+const stats: RenderStats = freshStats();
+
+const littleEndian = (() => {
+  const bytes = new Uint8Array(4);
+  new Uint32Array(bytes.buffer)[0] = 0x01020304;
+  return bytes[0] === 4;
+})();
+
+function freshStats(): RenderStats {
+  return {
+    layerHits: 0,
+    layerMisses: 0,
+    layerPartialRenders: 0,
+    layerPixelsPainted: 0,
+    frameHits: 0,
+    frameMisses: 0,
+    framePartialRenders: 0,
+    framePixelsComposited: 0,
+  };
+}
 
 function makeCanvas(width = SIZE, height = SIZE) {
   const canvas = document.createElement("canvas");
@@ -40,106 +85,263 @@ function makeCanvas(width = SIZE, height = SIZE) {
   return canvas;
 }
 
-function pixelsHash(layer: Layer) {
-  const pixels = expandPixels(layer.pixels);
-  let hash = 2166136261;
-  for (let i = 0; i < pixels.length; i++) {
-    const px = pixels[i];
-    if (!px) {
-      hash ^= 0;
-      hash = Math.imul(hash, 16777619);
-      continue;
-    }
-    for (let j = 1; j < px.length; j += 2) {
-      hash ^= px.charCodeAt(j);
-      hash = Math.imul(hash, 16777619);
+function touchEntry<T>(cache: Map<string, T>, key: string, value: T, limit: number) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
+function nextLayerVersion(layerId: string) {
+  const version = (layerVersions.get(layerId) || 0) + 1;
+  layerVersions.set(layerId, version);
+  return version;
+}
+
+function recordLayerChange(layerId: string, rect: DirtyRect) {
+  const version = nextLayerVersion(layerId);
+  const history = layerDirtyHistory.get(layerId) || [];
+  history.push({ version, rect });
+  if (history.length > 64) history.splice(0, history.length - 64);
+  layerDirtyHistory.set(layerId, history);
+  return version;
+}
+
+function layerDirtySince(layerId: string, previousVersion: number, version: number) {
+  if (previousVersion === version) return null;
+  const history = layerDirtyHistory.get(layerId) || [];
+  const changes = history.filter(
+    (change) => change.version > previousVersion && change.version <= version,
+  );
+  if (
+    changes.length !== version - previousVersion ||
+    changes[0]?.version !== previousVersion + 1
+  )
+    return FULL_CANVAS_RECT;
+  return changes.reduce<DirtyRect | null>(
+    (dirty, change) => unionDirtyRects(dirty, change.rect),
+    null,
+  );
+}
+
+export function markLayerDirty(layerId: string, rect: DirtyRect) {
+  const normalized = normalizeDirtyRect(rect);
+  if (!normalized) return;
+  recordLayerChange(layerId, normalized);
+}
+
+export function markLayerFullyDirty(layerId: string) {
+  markLayerDirty(layerId, FULL_CANVAS_RECT);
+}
+
+function writeLayerRegion(
+  entry: LayerCacheEntry,
+  pixels: PixelArray,
+  rect: DirtyRect,
+) {
+  const ctx = entry.canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(rect.x, rect.y, rect.width, rect.height);
+  if (!entry.visible) return;
+
+  const image = ctx.createImageData(rect.width, rect.height);
+  const words = new Uint32Array(image.data.buffer);
+  const alpha = Math.round(Math.max(0, Math.min(1, entry.opacity)) * 255);
+  let output = 0;
+  for (let y = rect.y; y < rect.y + rect.height; y++) {
+    let input = y * SIZE + rect.x;
+    for (let x = 0; x < rect.width; x++, input++, output++) {
+      const pixel = pixels[input];
+      if (!pixel) continue;
+      const rgb = Number.parseInt(pixel.slice(1), 16);
+      const red = (rgb >> 16) & 255;
+      const green = (rgb >> 8) & 255;
+      const blue = rgb & 255;
+      words[output] = littleEndian
+        ? ((alpha << 24) | (blue << 16) | (green << 8) | red) >>> 0
+        : ((red << 24) | (green << 16) | (blue << 8) | alpha) >>> 0;
     }
   }
-  return hash >>> 0;
+  ctx.putImageData(image, rect.x, rect.y);
 }
 
-function layerSignature(layer: Layer) {
-  return [
-    layer.visible ? 1 : 0,
-    layer.opacity,
-    pixelsHash(layer),
-  ].join(":");
-}
-
-function renderLayer(layer: Layer) {
-  const signature = layerSignature(layer);
+function prepareLayer(layer: Layer): PreparedLayer {
   const cached = layerCache.get(layer.id);
-  if (cached?.signature === signature) {
+  const pixels = expandPixels(layer.pixels);
+
+  if (!cached) {
+    const entry: LayerCacheEntry = {
+      canvas: makeCanvas(),
+      source: layer.pixels,
+      pixels,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      version: layerVersions.get(layer.id) || 0,
+    };
+    writeLayerRegion(entry, pixels, FULL_CANVAS_RECT);
+    touchEntry(layerCache, layer.id, entry, MAX_LAYER_CACHE_ENTRIES);
+    stats.layerMisses++;
+    stats.layerPixelsPainted += SIZE * SIZE;
+    return { entry, dirty: FULL_CANVAS_RECT };
+  }
+
+  const metadataChanged =
+    cached.visible !== layer.visible || cached.opacity !== layer.opacity;
+  let version = layerVersions.get(layer.id) || 0;
+  if (metadataChanged) {
+    version = recordLayerChange(layer.id, FULL_CANVAS_RECT);
+  } else if (version === cached.version && cached.source !== layer.pixels) {
+    const fallbackDirty = diffPixelBounds(cached.pixels, pixels);
+    if (fallbackDirty) version = recordLayerChange(layer.id, fallbackDirty);
+  }
+  const dirty = layerDirtySince(layer.id, cached.version, version);
+
+  if (!dirty) {
+    cached.source = layer.pixels;
+    cached.pixels = pixels;
+    touchEntry(layerCache, layer.id, cached, MAX_LAYER_CACHE_ENTRIES);
     stats.layerHits++;
-    return cached.canvas;
+    return { entry: cached, dirty: null };
   }
+
+  cached.version = version;
+  cached.source = layer.pixels;
+  cached.pixels = pixels;
+  cached.visible = layer.visible;
+  cached.opacity = layer.opacity;
+  writeLayerRegion(cached, pixels, dirty);
+  touchEntry(layerCache, layer.id, cached, MAX_LAYER_CACHE_ENTRIES);
   stats.layerMisses++;
-  const canvas = cached?.canvas || makeCanvas();
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-  ctx.clearRect(0, 0, SIZE, SIZE);
-  if (layer.visible) {
-    const pixels = expandPixels(layer.pixels);
-    const image = ctx.createImageData(SIZE, SIZE);
-    const data = image.data;
-    const alpha = Math.round(Math.max(0, Math.min(1, layer.opacity)) * 255);
-    for (let i = 0; i < pixels.length; i++) {
-      const px = pixels[i];
-      if (!px) continue;
-      const n = parseInt(px.slice(1), 16);
-      const di = i * 4;
-      data[di] = (n >> 16) & 255;
-      data[di + 1] = (n >> 8) & 255;
-      data[di + 2] = n & 255;
-      data[di + 3] = alpha;
-    }
-    ctx.putImageData(image, 0, 0);
-  }
-  layerCache.set(layer.id, { signature, canvas });
-  return canvas;
+  stats.layerPixelsPainted += dirty.width * dirty.height;
+  if (dirty.width !== SIZE || dirty.height !== SIZE) stats.layerPartialRenders++;
+  return { entry: cached, dirty };
 }
 
 function backgroundSignature(background: ProjectBackground) {
   return `${background?.mode || "transparent"}:${background?.color || ""}`;
 }
 
-function frameSignature(frame: Frame, background: ProjectBackground) {
-  return [
-    backgroundSignature(background),
-    frame.layers
-      .map((layer) => `${layer.id}:${layerSignature(layer)}`)
-      .join("|"),
-  ].join(";");
+function frameCacheKey(frame: Frame, background: ProjectBackground) {
+  return `${frame.id};${backgroundSignature(background)}`;
+}
+
+function composeFrameRegion(
+  entry: FrameCacheEntry,
+  layers: PreparedLayer[],
+  background: ProjectBackground,
+  rect: DirtyRect,
+) {
+  const ctx = entry.canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(rect.x, rect.y, rect.width, rect.height);
+  if (background?.mode === "color") {
+    ctx.fillStyle = background.color || "#0f172a";
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  }
+  for (const layer of layers) {
+    if (!layer.entry.visible) continue;
+    ctx.drawImage(
+      layer.entry.canvas,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+    );
+  }
 }
 
 export function renderFrameCached(
   frame: Frame,
   background: ProjectBackground = { mode: "transparent", color: "#0f172a" },
 ) {
-  const signature = frameSignature(frame, background);
-  const cached = frameCache.get(frame.id);
-  if (cached?.signature === signature) {
+  const key = frameCacheKey(frame, background);
+  const cached = frameCache.get(key);
+  const layerIds = frame.layers.map((layer) => layer.id);
+  const sourceMatches =
+    cached &&
+    cached.layerIds.length === frame.layers.length &&
+    frame.layers.every(
+      (layer, index) =>
+        cached.layerIds[index] === layer.id &&
+        cached.layerVersions[index] === (layerVersions.get(layer.id) || 0) &&
+        cached.layerSources[index] === layer.pixels &&
+        cached.layerMetadata[index] === `${layer.visible}:${layer.opacity}`,
+    );
+  if (sourceMatches) {
+    touchEntry(frameCache, key, cached, MAX_FRAME_CACHE_ENTRIES);
     stats.frameHits++;
     return cached.canvas;
   }
+
+  const layers = frame.layers.map(prepareLayer);
+  const versions = layers.map((layer) => layer.entry.version);
+
+  const unchanged =
+    cached &&
+    cached.layerIds.length === layerIds.length &&
+    cached.layerIds.every(
+      (id, index) => id === layerIds[index] && cached.layerVersions[index] === versions[index],
+    );
+  if (unchanged) {
+    cached.layerSources = frame.layers.map((layer) => layer.pixels);
+    cached.layerMetadata = frame.layers.map(
+      (layer) => `${layer.visible}:${layer.opacity}`,
+    );
+    touchEntry(frameCache, key, cached, MAX_FRAME_CACHE_ENTRIES);
+    stats.frameHits++;
+    return cached.canvas;
+  }
+
+  const entry: FrameCacheEntry = cached || {
+    canvas: makeCanvas(),
+    layerIds: [],
+    layerVersions: [],
+    layerSources: [],
+    layerMetadata: [],
+  };
+  let dirty: DirtyRect | null = null;
+  const sameStack =
+    cached &&
+    cached.layerIds.length === layerIds.length &&
+    cached.layerIds.every((id, index) => id === layerIds[index]);
+  if (sameStack) {
+    for (let index = 0; index < layers.length; index++) {
+      if (cached.layerVersions[index] === versions[index]) continue;
+      dirty = unionDirtyRects(
+        dirty,
+        layerDirtySince(layerIds[index], cached.layerVersions[index], versions[index]),
+      );
+      if (dirty?.width === SIZE && dirty.height === SIZE) break;
+    }
+  } else {
+    dirty = FULL_CANVAS_RECT;
+  }
+  dirty ||= FULL_CANVAS_RECT;
+
+  composeFrameRegion(entry, layers, background, dirty);
+  entry.layerIds = layerIds;
+  entry.layerVersions = versions;
+  entry.layerSources = frame.layers.map((layer) => layer.pixels);
+  entry.layerMetadata = frame.layers.map(
+    (layer) => `${layer.visible}:${layer.opacity}`,
+  );
+  touchEntry(frameCache, key, entry, MAX_FRAME_CACHE_ENTRIES);
   stats.frameMisses++;
-  const canvas = cached?.canvas || makeCanvas();
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-  ctx.clearRect(0, 0, SIZE, SIZE);
-  ctx.imageSmoothingEnabled = false;
-  if (background?.mode === "color") {
-    ctx.fillStyle = background.color || "#0f172a";
-    ctx.fillRect(0, 0, SIZE, SIZE);
-  }
-  for (const layer of frame.layers) {
-    if (!layer.visible) continue;
-    ctx.drawImage(renderLayer(layer), 0, 0);
-  }
-  frameCache.set(frame.id, { signature, canvas });
-  return canvas;
+  stats.framePixelsComposited += dirty.width * dirty.height;
+  if (dirty.width !== SIZE || dirty.height !== SIZE) stats.framePartialRenders++;
+  return entry.canvas;
 }
 
+// Export and AI diff paths intentionally bypass editor caches so persisted
+// output can never observe stale browser state.
 export function renderFrameFresh(
   frame: Frame,
   background: ProjectBackground = { mode: "transparent", color: "#0f172a" },
@@ -163,6 +365,13 @@ export function renderFrameFresh(
 export function clearRenderCache() {
   layerCache.clear();
   frameCache.clear();
+  layerVersions.clear();
+  layerDirtyHistory.clear();
+  resetRenderCacheStats();
+}
+
+export function resetRenderCacheStats() {
+  Object.assign(stats, freshStats());
 }
 
 export function renderCacheStats() {

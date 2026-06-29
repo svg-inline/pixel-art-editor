@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
     "test": "node --import tsx --test tests/*.test.ts",
+    "benchmark:render": "tsx scripts/benchmark-render.ts",
     "test:e2e": "node scripts/run-e2e.mjs",
     "test:e2e:ui": "node scripts/run-e2e.mjs --ui",
     "test:e2e:debug": "node scripts/run-e2e.mjs --debug",

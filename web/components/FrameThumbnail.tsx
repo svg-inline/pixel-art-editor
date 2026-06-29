@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Frame, ProjectBackground } from "../../shared/pixel-core.ts";
-import { renderFrameFresh } from "../canvas-renderer.ts";
+import { renderFrameCached } from "../canvas-renderer.ts";
 
 type FrameThumbnailProps = {
   frame: Frame;
@@ -19,7 +19,7 @@ export function FrameThumbnail({ frame, background }: FrameThumbnailProps) {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(renderFrameFresh(frame, background), 0, 0, 48, 48);
+    ctx.drawImage(renderFrameCached(frame, background), 0, 0, 48, 48);
   }, [frame, background]);
 
   return <canvas className="frame-thumb" ref={ref} />;

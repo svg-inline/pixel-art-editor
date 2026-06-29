@@ -7,4 +7,5 @@ export * from "./prompt-parser.ts";
 export * from "./qa.ts";
 export * from "./raster.ts";
 export * from "./render.ts";
+export * from "./render-optimization.ts";
 export * from "./selection.ts";
