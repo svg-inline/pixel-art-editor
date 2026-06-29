@@ -1,6 +1,7 @@
 import type { Project, ProjectBackground } from "../../shared/pixel-core.ts";
 import type { GridDensity, GridMode, Tool } from "../types.ts";
-import { TOOL_NAMES } from "../types.ts";
+import { TOOL_LABELS, TOOL_NAMES } from "../types.ts";
+import { shortcutKeyForTool } from "../hooks/useKeyboardShortcuts.ts";
 
 type ToolPanelProps = {
   project: Project;
@@ -90,6 +91,9 @@ export function ToolPanel({
             className="swatch"
             style={{ background: swatch }}
             title={swatch}
+            type="button"
+            aria-label={`Usar cor ${swatch}`}
+            aria-pressed={color.toLowerCase() === swatch.toLowerCase()}
             onClick={() => setColor(swatch)}
           />
         ))}
@@ -99,6 +103,10 @@ export function ToolPanel({
           <button
             key={toolName}
             className={tool === toolName ? "active" : ""}
+            type="button"
+            aria-pressed={tool === toolName}
+            aria-label={`${TOOL_LABELS[toolName]} (${shortcutKeyForTool(toolName) || "sem atalho"})`}
+            title={`${TOOL_LABELS[toolName]} — ${shortcutKeyForTool(toolName) || "sem atalho"}`}
             onClick={() => setTool(toolName)}
           >
             {toolName}
@@ -110,7 +118,7 @@ export function ToolPanel({
         <input
           type="range"
           min="1"
-          max="8"
+          max="16"
           value={zoom}
           onChange={(event) => setZoom(+event.target.value)}
         />{" "}

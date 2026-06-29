@@ -2,6 +2,8 @@
 
 Editor web local-first para pixel art 256x256 com camadas, frames, spritesheets, preview animado, bridge HTTP/SSE, ferramentas MCP e exportação para Godot/Unity.
 
+Atalhos e gestos do editor: [docs/editor-shortcuts.md](docs/editor-shortcuts.md).
+
 ## Instalar
 
 Gerenciador oficial: npm. O lockfile versionado é `package-lock.json`; não use Yarn/Pnpm neste projeto.

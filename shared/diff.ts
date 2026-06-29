@@ -227,6 +227,8 @@ export function validateProjectDiff(
         throw new Error(
           `diff_target_not_found_${operation.frameId}_${operation.layerId}`,
         );
+      if (layer.locked)
+        throw new Error(`diff_layer_locked_${operation.layerId}`);
       const pixels = expandPixels(layer.pixels);
       totalPixelChanges += operation.changes.length;
       for (const change of operation.changes) {

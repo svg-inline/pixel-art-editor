@@ -12,6 +12,7 @@ import type { Selection } from "../shared/pixel-core.ts";
 import { AiPanel } from "./components/AiPanel.tsx";
 import { CanvasEditor } from "./components/CanvasEditor.tsx";
 import { ExportPanel } from "./components/ExportPanel.tsx";
+import { EditorProductivityPanel } from "./components/EditorProductivityPanel.tsx";
 import { GameDataPanel } from "./components/GameDataPanel.tsx";
 import { LayerPanel } from "./components/LayerPanel.tsx";
 import { PalettePanel } from "./components/PalettePanel.tsx";
@@ -41,6 +42,7 @@ import type {
   GridDensity,
   GridMode,
   RemoteHistoryItem,
+  SymmetryMode,
   Tool,
 } from "./types.ts";
 import { AUTOSAVE_LABELS, DEFAULT_ZOOM } from "./types.ts";
@@ -68,6 +70,7 @@ function App() {
 
   const previewStateRef = useRef<AiPreviewState | null>(null);
   const [tool, setTool] = useState<Tool>("pencil");
+  const [symmetry, setSymmetry] = useState<SymmetryMode>("none");
   const [color, setColor] = useState("#111827");
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [showGrid, setShowGrid] = useState(true);
@@ -194,6 +197,8 @@ function App() {
     color,
     setColor,
     zoom,
+    setZoom,
+    symmetry,
     showGrid,
     showOnion,
     showNextOnion,
@@ -295,6 +300,13 @@ function App() {
           onionNextOpacity={onionNextOpacity}
           setOnionNextOpacity={setOnionNextOpacity}
           setBackgroundField={projectActions.setBackgroundField}
+        />
+
+        <EditorProductivityPanel
+          symmetry={symmetry}
+          setSymmetry={setSymmetry}
+          resizeCanvasContent={projectActions.resizeCanvasContent}
+          cropCanvasToBounds={projectActions.cropCanvasToBounds}
         />
 
         <AiPanel
@@ -405,6 +417,7 @@ function App() {
           addLayer={projectActions.addLayer}
           removeLayer={projectActions.removeLayer}
           moveLayer={projectActions.moveLayer}
+          mergeDown={projectActions.mergeDown}
           updateLayer={projectActions.updateLayer}
           updateProject={updateProject}
           undo={undo}

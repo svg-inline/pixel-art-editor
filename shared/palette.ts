@@ -19,6 +19,7 @@ export function replaceGlobalColor(project: Project, from: string, to: string) {
   if (!a || !b) return project;
   for (const frame of project.frames)
     for (const layer of frame.layers) {
+      if (layer.locked) continue;
       const pixels = withPixels(layer);
       for (let i = 0; i < pixels.length; i++)
         if (pixels[i] === a) pixels[i] = b;
@@ -37,6 +38,7 @@ export function limitColors(project: Project, maxColors = 32) {
   const fallback = allowed[0];
   for (const frame of project.frames)
     for (const layer of frame.layers) {
+      if (layer.locked) continue;
       const pixels = withPixels(layer);
       for (let i = 0; i < pixels.length; i++)
         if (pixels[i] && !allowed.includes(pixels[i] as string))

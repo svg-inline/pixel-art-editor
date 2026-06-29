@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
+import type {
+  Dispatch,
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+  SetStateAction,
+  WheelEvent as ReactWheelEvent,
+} from "react";
 import {
   activeFrameOf,
   activeLayerOf,
+  canEditPixel,
   clamp,
   drawEllipse,
   drawLine,
   drawRect,
   expandPixels,
   indexOf,
+  lassoSelection,
+  magicWandSelection,
   normalizeBoxKind,
   selectionBounds,
   SIZE,
@@ -28,10 +37,21 @@ import {
   fillBackground,
   floodFillFrame,
   isShapeTool,
+  symmetryPoints,
 } from "../lib/editor-helpers.ts";
-import type { AiPreviewState, Point, ShapePreviewState, Tool } from "../types.ts";
+import type {
+  AiPreviewState,
+  Point,
+  ShapePreviewState,
+  SymmetryMode,
+  Tool,
+} from "../types.ts";
 
 const idx = indexOf;
+
+function hasBrushPreview(tool: Tool) {
+  return tool === "pencil" || tool === "eraser" || tool === "dither";
+}
 
 type UseCanvasInputParams = {
   project: Project;
@@ -44,6 +64,8 @@ type UseCanvasInputParams = {
   color: string;
   setColor: (color: string) => void;
   zoom: number;
+  setZoom: Dispatch<SetStateAction<number>>;
+  symmetry: SymmetryMode;
   showGrid: boolean;
   showOnion: boolean;
   showNextOnion: boolean;
@@ -83,6 +105,8 @@ export function useCanvasInput({
   color,
   setColor,
   zoom,
+  setZoom,
+  symmetry,
   showGrid,
   showOnion,
   showNextOnion,
@@ -101,6 +125,7 @@ export function useCanvasInput({
   updateProject,
 }: UseCanvasInputParams) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef = useRef<HTMLElement | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const aiPreviewRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRafRef = useRef<number | null>(null);
@@ -109,10 +134,23 @@ export function useCanvasInput({
   const strokeBeforeRef = useRef<Project | null>(null);
   const shapeStartRef = useRef<Point | null>(null);
   const lastCellRef = useRef<Point | null>(null);
+  const lassoPointsRef = useRef<Point[]>([]);
+  const spaceHeldRef = useRef(false);
+  const panRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
   const lastRenderStatsUpdateRef = useRef(0);
   const [selectionStart, setSelectionStart] = useState<Point | null>(null);
   const [shapePreview, setShapePreview] =
     useState<ShapePreviewState | null>(null);
+  const [lassoPreview, setLassoPreview] = useState<Point[]>([]);
+  const [hoverPoint, setHoverPoint] = useState<Point | null>(null);
+  const [panReady, setPanReady] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const [renderStatsText, setRenderStatsText] = useState("cache frio");
   const checkerSize = Math.max(8, Math.min(32, zoom * 4));
 
@@ -125,6 +163,12 @@ export function useCanvasInput({
     showOnion,
     selection,
     shapePreview,
+    lassoPreview,
+    hoverPoint,
+    symmetry,
+    tool,
+    color,
+    paintGridCell,
     showGameData,
     gridOpacity,
     gridMajorStep,
@@ -151,6 +195,44 @@ export function useCanvasInput({
     },
     [],
   );
+
+  useEffect(() => {
+    const editable = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      return Boolean(
+        element?.isContentEditable ||
+          element?.tagName === "INPUT" ||
+          element?.tagName === "TEXTAREA" ||
+          element?.tagName === "SELECT",
+      );
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || editable(event.target)) return;
+      event.preventDefault();
+      spaceHeldRef.current = true;
+      setPanReady(true);
+    };
+    const releaseSpace = (event: KeyboardEvent) => {
+      if (event.code !== "Space") return;
+      spaceHeldRef.current = false;
+      setPanReady(false);
+      if (!panRef.current) setIsPanning(false);
+    };
+    const releaseAll = () => {
+      spaceHeldRef.current = false;
+      panRef.current = null;
+      setPanReady(false);
+      setIsPanning(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", releaseSpace);
+    window.addEventListener("blur", releaseAll);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", releaseSpace);
+      window.removeEventListener("blur", releaseAll);
+    };
+  }, []);
 
   function scheduleCanvasRender() {
     if (canvasRafRef.current !== null) return;
@@ -225,14 +307,115 @@ export function useCanvasInput({
     if (!bounds) return;
     ctx.save();
     ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = Math.max(1, Math.min(2, zoom));
+    if (rect.mask?.length) {
+      const selected = new Set(rect.mask);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      for (const pixelIndex of selected) {
+        const x = pixelIndex % SIZE;
+        const y = Math.floor(pixelIndex / SIZE);
+        const left = x * zoom + 0.5;
+        const top = y * zoom + 0.5;
+        const right = (x + 1) * zoom + 0.5;
+        const bottom = (y + 1) * zoom + 0.5;
+        if (!selected.has(pixelIndex - 1) || x === 0) {
+          ctx.moveTo(left, top);
+          ctx.lineTo(left, bottom);
+        }
+        if (!selected.has(pixelIndex + 1) || x === SIZE - 1) {
+          ctx.moveTo(right, top);
+          ctx.lineTo(right, bottom);
+        }
+        if (!selected.has(pixelIndex - SIZE) || y === 0) {
+          ctx.moveTo(left, top);
+          ctx.lineTo(right, top);
+        }
+        if (!selected.has(pixelIndex + SIZE) || y === SIZE - 1) {
+          ctx.moveTo(left, bottom);
+          ctx.lineTo(right, bottom);
+        }
+      }
+      ctx.stroke();
+    } else {
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(
+        bounds.x * zoom + 0.5,
+        bounds.y * zoom + 0.5,
+        bounds.w * zoom,
+        bounds.h * zoom,
+      );
+    }
+    ctx.restore();
+  }
+
+  function drawLassoOverlay(ctx: CanvasRenderingContext2D) {
+    if (!lassoPreview.length) return;
+    ctx.save();
+    ctx.strokeStyle = "#60a5fa";
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
-    ctx.strokeRect(
-      bounds.x * zoom + 0.5,
-      bounds.y * zoom + 0.5,
-      bounds.w * zoom,
-      bounds.h * zoom,
-    );
+    ctx.beginPath();
+    lassoPreview.forEach((point, index) => {
+      const x = point.x * zoom + zoom / 2;
+      const y = point.y * zoom + zoom / 2;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function brushCellOrigins(point: Point) {
+    const cellSize =
+      showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
+    const origin = {
+      x: Math.floor(point.x / cellSize) * cellSize,
+      y: Math.floor(point.y / cellSize) * cellSize,
+    };
+    const origins = [origin];
+    if (symmetry === "horizontal" || symmetry === "both")
+      origins.push({ x: SIZE - cellSize - origin.x, y: origin.y });
+    if (symmetry === "vertical" || symmetry === "both")
+      origins.push({ x: origin.x, y: SIZE - cellSize - origin.y });
+    if (symmetry === "both")
+      origins.push({
+        x: SIZE - cellSize - origin.x,
+        y: SIZE - cellSize - origin.y,
+      });
+    return {
+      cellSize,
+      origins: [
+        ...new Map(
+          origins.map((item) => [`${item.x}:${item.y}`, item]),
+        ).values(),
+      ],
+    };
+  }
+
+  function drawBrushPreview(ctx: CanvasRenderingContext2D) {
+    if (
+      !hoverPoint ||
+      !hasBrushPreview(tool)
+    )
+      return;
+    const { cellSize, origins } = brushCellOrigins(hoverPoint);
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = tool === "eraser" ? "#fb7185" : "#f8fafc";
+    ctx.fillStyle = tool === "eraser" ? "rgba(251,113,133,.22)" : color;
+    ctx.globalAlpha = tool === "eraser" ? 1 : 0.38;
+    for (const origin of origins) {
+      const width = Math.min(cellSize, SIZE - origin.x);
+      const height = Math.min(cellSize, SIZE - origin.y);
+      ctx.fillRect(origin.x * zoom, origin.y * zoom, width * zoom, height * zoom);
+      ctx.strokeRect(
+        origin.x * zoom + 0.5,
+        origin.y * zoom + 0.5,
+        width * zoom,
+        height * zoom,
+      );
+    }
     ctx.restore();
   }
 
@@ -349,7 +532,9 @@ export function useCanvasInput({
     drawDynamicGrid(ctx);
     drawGameDataOverlay(ctx);
     if (selection) drawRectOverlay(ctx, selection, "#60a5fa");
+    drawLassoOverlay(ctx);
     drawShapeOverlay(ctx);
+    drawBrushPreview(ctx);
     const now = performance.now();
     if (now - lastRenderStatsUpdateRef.current > 1000) {
       lastRenderStatsUpdateRef.current = now;
@@ -393,7 +578,11 @@ export function useCanvasInput({
     );
   }
 
-  function getCell(event: ReactMouseEvent<HTMLCanvasElement>): Point {
+  function getCell(
+    event:
+      | ReactPointerEvent<HTMLCanvasElement>
+      | ReactWheelEvent<HTMLCanvasElement>,
+  ): Point {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return {
@@ -472,42 +661,76 @@ export function useCanvasInput({
     const next = edit.project;
     const frameToEdit = edit.frame;
     const layer = edit.layer;
+    if (layer.locked) return;
     const cellSize =
       showGrid && paintGridCell ? clamp(effectiveGridStep, 1, SIZE) : 1;
-    const cellX = Math.floor(x / cellSize) * cellSize;
-    const cellY = Math.floor(y / cellSize) * cellSize;
+    const { origins } = brushCellOrigins({ x, y });
     let dirtyRect: { x: number; y: number; width: number; height: number } | null = null;
-    const paintCell = (valueFn: (x: number, y: number) => string | null) => {
-      let changed = false;
-      for (let yy = cellY; yy < Math.min(SIZE, cellY + cellSize); yy++)
-        for (let xx = cellX; xx < Math.min(SIZE, cellX + cellSize); xx++) {
-          const pixelIndex = idx(xx, yy);
-          const value = valueFn(xx, yy);
-          if (layer.pixels[pixelIndex] === value) continue;
-          layer.pixels[pixelIndex] = value;
-          changed = true;
-        }
-      if (changed) {
-        dirtyRect = {
-          x: cellX,
-          y: cellY,
-          width: Math.min(SIZE, cellX + cellSize) - cellX,
-          height: Math.min(SIZE, cellY + cellSize) - cellY,
-        };
+    const addDirtyRect = (rect: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => {
+      if (!dirtyRect) {
+        dirtyRect = rect;
+        return;
       }
-    };
-    if (tool === "pencil") paintCell(() => color);
-    if (tool === "eraser") paintCell(() => null);
-    if (tool === "bucket")
-      dirtyRect = floodFillFrame(
-        frameToEdit,
-        activeLayerIndexOf(frameToEdit),
-        x,
-        y,
-        color,
+      const x1 = Math.min(dirtyRect.x, rect.x);
+      const y1 = Math.min(dirtyRect.y, rect.y);
+      const x2 = Math.max(
+        dirtyRect.x + dirtyRect.width,
+        rect.x + rect.width,
       );
+      const y2 = Math.max(
+        dirtyRect.y + dirtyRect.height,
+        rect.y + rect.height,
+      );
+      dirtyRect = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+    };
+    const paintCells = (valueFn: (x: number, y: number) => string | null) => {
+      let changed = false;
+      for (const origin of origins) {
+        let cellChanged = false;
+        for (let yy = origin.y; yy < Math.min(SIZE, origin.y + cellSize); yy++)
+          for (let xx = origin.x; xx < Math.min(SIZE, origin.x + cellSize); xx++) {
+            const pixelIndex = idx(xx, yy);
+            const value = valueFn(xx, yy);
+            if (
+              layer.pixels[pixelIndex] === value ||
+              !canEditPixel(layer, xx, yy, value)
+            )
+              continue;
+            layer.pixels[pixelIndex] = value;
+            changed = true;
+            cellChanged = true;
+          }
+        if (cellChanged)
+          addDirtyRect({
+            x: origin.x,
+            y: origin.y,
+            width: Math.min(SIZE, origin.x + cellSize) - origin.x,
+            height: Math.min(SIZE, origin.y + cellSize) - origin.y,
+          });
+      }
+      return changed;
+    };
+    if (tool === "pencil") paintCells(() => color);
+    if (tool === "eraser") paintCells(() => null);
+    if (tool === "bucket") {
+      for (const point of symmetryPoints({ x, y }, symmetry)) {
+        const filled = floodFillFrame(
+          frameToEdit,
+          activeLayerIndexOf(frameToEdit),
+          point.x,
+          point.y,
+          color,
+        );
+        if (filled) addDirtyRect(filled);
+      }
+    }
     if (tool === "dither")
-      paintCell((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
+      paintCells((xx, yy) => ((xx + yy) % 2 === 0 ? color : null));
     if (!dirtyRect) return;
     markDirty();
     markLayerDirty(layer.id, dirtyRect);
@@ -517,21 +740,46 @@ export function useCanvasInput({
 
   function applyShapeTool(start: Point, end: Point) {
     const shapeTool = tool;
+    const transforms: ((point: Point) => Point)[] = [
+      (point) => point,
+    ];
+    if (symmetry === "horizontal" || symmetry === "both")
+      transforms.push((point) => ({ x: SIZE - 1 - point.x, y: point.y }));
+    if (symmetry === "vertical" || symmetry === "both")
+      transforms.push((point) => ({ x: point.x, y: SIZE - 1 - point.y }));
+    if (symmetry === "both")
+      transforms.push((point) => ({
+        x: SIZE - 1 - point.x,
+        y: SIZE - 1 - point.y,
+      }));
     updateProject(
       (draft) => {
         const layer = activeLayerOf(activeFrameOf(draft));
-        if (shapeTool === "line") {
-          drawLine(layer, start.x, start.y, end.x, end.y, color, 1);
-          return;
+        if (layer.locked) return;
+        for (const transform of transforms) {
+          const transformedStart = transform(start);
+          const transformedEnd = transform(end);
+          if (shapeTool === "line") {
+            drawLine(
+              layer,
+              transformedStart.x,
+              transformedStart.y,
+              transformedEnd.x,
+              transformedEnd.y,
+              color,
+              1,
+            );
+            continue;
+          }
+          const bounds = boundsFromPoints(transformedStart, transformedEnd);
+          if (shapeTool === "rect") {
+            drawRect(layer, bounds.x, bounds.y, bounds.w, bounds.h, color);
+            continue;
+          }
+          const rx = Math.max(1, Math.floor(bounds.w / 2));
+          const ry = Math.max(1, Math.floor(bounds.h / 2));
+          drawEllipse(layer, bounds.x + rx, bounds.y + ry, rx, ry, color);
         }
-        const bounds = boundsFromPoints(start, end);
-        if (shapeTool === "rect") {
-          drawRect(layer, bounds.x, bounds.y, bounds.w, bounds.h, color);
-          return;
-        }
-        const rx = Math.max(1, Math.floor(bounds.w / 2));
-        const ry = Math.max(1, Math.floor(bounds.h / 2));
-        drawEllipse(layer, bounds.x + rx, bounds.y + ry, rx, ry, color);
       },
       true,
       shapeTool === "line"
@@ -548,9 +796,39 @@ export function useCanvasInput({
     );
   }
 
-  function onMouseDown(event: ReactMouseEvent<HTMLCanvasElement>) {
+  function onPointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.button === 1 || (event.button === 0 && spaceHeldRef.current)) {
+      const stage = stageRef.current;
+      if (!stage) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      panRef.current = {
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        scrollLeft: stage.scrollLeft,
+        scrollTop: stage.scrollTop,
+      };
+      setIsPanning(true);
+      return;
+    }
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
     const point = getCell(event);
+    if (hasBrushPreview(tool)) setHoverPoint(point);
     lastCellRef.current = point;
+    if (tool === "wand") {
+      setSelection(
+        magicWandSelection(expandPixels(activeLayerOf(frame).pixels), point.x, point.y),
+      );
+      return;
+    }
+    if (tool === "lasso") {
+      lassoPointsRef.current = [point];
+      setLassoPreview([point]);
+      drawingRef.current = true;
+      return;
+    }
     if (tool === "select") {
       setSelectionStart(point);
       setSelection({ ...point, w: 0, h: 0 });
@@ -562,15 +840,40 @@ export function useCanvasInput({
       drawingRef.current = true;
       return;
     }
+    if (tool === "picker") {
+      editAt(point.x, point.y);
+      return;
+    }
     strokeBeforeRef.current = cloneProject(projectRef.current);
     drawingRef.current = true;
     editAt(point.x, point.y);
   }
 
-  function onMouseMove(event: ReactMouseEvent<HTMLCanvasElement>) {
+  function onPointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const pan = panRef.current;
+    if (pan?.pointerId === event.pointerId) {
+      const stage = stageRef.current;
+      if (stage) {
+        stage.scrollLeft = pan.scrollLeft - (event.clientX - pan.clientX);
+        stage.scrollTop = pan.scrollTop - (event.clientY - pan.clientY);
+      }
+      return;
+    }
     const point = getCell(event);
+    if (hasBrushPreview(tool))
+      setHoverPoint((current) =>
+        current?.x === point.x && current.y === point.y ? current : point,
+      );
     const previousPoint = lastCellRef.current;
     lastCellRef.current = point;
+    if (tool === "lasso" && drawingRef.current && event.buttons === 1) {
+      const last = lassoPointsRef.current.at(-1);
+      if (last?.x !== point.x || last?.y !== point.y) {
+        lassoPointsRef.current = [...lassoPointsRef.current, point];
+        setLassoPreview(lassoPointsRef.current);
+      }
+      return;
+    }
     if (tool === "select" && selectionStart) {
       setSelection({
         x: selectionStart.x,
@@ -592,8 +895,27 @@ export function useCanvasInput({
       editAt(point.x, point.y);
   }
 
-  function onMouseUp(event?: ReactMouseEvent<HTMLCanvasElement>) {
-    if (event) lastCellRef.current = getCell(event);
+  function releasePointer(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function onPointerUp(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (panRef.current?.pointerId === event.pointerId) {
+      panRef.current = null;
+      setIsPanning(false);
+      releasePointer(event);
+      return;
+    }
+    lastCellRef.current = getCell(event);
+    if (tool === "lasso" && drawingRef.current) {
+      setSelection(lassoSelection(lassoPointsRef.current));
+      lassoPointsRef.current = [];
+      setLassoPreview([]);
+      drawingRef.current = false;
+      releasePointer(event);
+      return;
+    }
     if (drawingRef.current && isShapeTool(tool) && shapeStartRef.current) {
       applyShapeTool(
         shapeStartRef.current,
@@ -602,6 +924,7 @@ export function useCanvasInput({
       shapeStartRef.current = null;
       setShapePreview(null);
       drawingRef.current = false;
+      releasePointer(event);
       return;
     }
     if (drawingRef.current) {
@@ -621,6 +944,43 @@ export function useCanvasInput({
     }
     drawingRef.current = false;
     setSelectionStart(null);
+    releasePointer(event);
+  }
+
+  function onPointerLeave(event: ReactPointerEvent<HTMLCanvasElement>) {
+    setHoverPoint(null);
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      drawingRef.current = false;
+      setSelectionStart(null);
+    }
+  }
+
+  function onWheel(event: ReactWheelEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    const stage = stageRef.current;
+    const canvas = canvasRef.current;
+    if (!stage || !canvas) return;
+    const direction = event.deltaY < 0 ? 1 : -1;
+    const nextZoom = clamp(zoom + direction, 1, 16);
+    if (nextZoom === zoom) return;
+    const canvasRect = canvas.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    const pixelX = clamp((event.clientX - canvasRect.left) / zoom, 0, SIZE);
+    const pixelY = clamp((event.clientY - canvasRect.top) / zoom, 0, SIZE);
+    const viewportX = event.clientX - stageRect.left;
+    const viewportY = event.clientY - stageRect.top;
+    setZoom(nextZoom);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const updatedCanvas = canvasRef.current;
+        const updatedStage = stageRef.current;
+        if (!updatedCanvas || !updatedStage) return;
+        updatedStage.scrollLeft =
+          updatedCanvas.offsetLeft + pixelX * nextZoom - viewportX;
+        updatedStage.scrollTop =
+          updatedCanvas.offsetTop + pixelY * nextZoom - viewportY;
+      }),
+    );
   }
 
   return {
@@ -630,10 +990,15 @@ export function useCanvasInput({
     renderStatsText,
     checkerSize,
     canvasHandlers: {
-      onMouseDown,
-      onMouseMove,
-      onMouseUp,
-      onMouseLeave: onMouseUp,
+      stageRef,
+      panReady,
+      isPanning,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel: onPointerUp,
+      onPointerLeave,
+      onWheel,
     },
   };
 }

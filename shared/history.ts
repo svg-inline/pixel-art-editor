@@ -268,8 +268,21 @@ export function createProjectCommand(
     for (const beforeFrame of before.frames) {
       const afterFrame = after.frames.find((frame) => frame.id === beforeFrame.id);
       if (!afterFrame) continue;
-      const patch = framePatchFromFrames(beforeFrame, afterFrame);
-      if (patch) patches.push(patch);
+      const framePatch = framePatchFromFrames(beforeFrame, afterFrame);
+      if (framePatch) patches.push(framePatch);
+      for (const beforeLayer of beforeFrame.layers) {
+        const afterLayer = afterFrame.layers.find(
+          (layer) => layer.id === beforeLayer.id,
+        );
+        if (!afterLayer) continue;
+        const pixelPatch = pixelPatchFromLayers(
+          beforeFrame.id,
+          beforeLayer.id,
+          beforeLayer,
+          afterLayer,
+        );
+        if (pixelPatch) patches.push(pixelPatch);
+      }
     }
   } else {
     patches.push({

@@ -3,7 +3,7 @@
 Prioridade: P2  
 Área: Frontend / UX / Ferramentas  
 Tipo: Feature profissional  
-Status inicial: Backlog
+Status: Concluída em 2026-06-29
 
 ## Objetivo
 
@@ -31,36 +31,36 @@ O editor já possui seleção, linha, retângulo e elipse, mas ainda faltam recu
 
 ## Checklist
 
-- [ ] Implementar pan com spacebar ou botão central.
-- [ ] Implementar zoom centrado no cursor.
-- [ ] Criar sistema de atalhos configuráveis ou pelo menos documentados.
-- [ ] Adicionar lock alpha por camada.
-- [ ] Adicionar lock layer.
-- [ ] Adicionar merge down.
-- [ ] Adicionar ferramenta de simetria horizontal/vertical.
-- [ ] Adicionar magic wand baseada em cor/contiguidade.
-- [ ] Adicionar lasso ou seleção livre simplificada.
-- [ ] Adicionar brush preview antes de aplicar.
-- [ ] Adicionar resize canvas e crop por bounds.
-- [ ] Garantir acessibilidade mínima em botões e atalhos.
+- [x] Implementar pan com spacebar ou botão central.
+- [x] Implementar zoom centrado no cursor.
+- [x] Criar sistema de atalhos configuráveis ou pelo menos documentados.
+- [x] Adicionar lock alpha por camada.
+- [x] Adicionar lock layer.
+- [x] Adicionar merge down.
+- [x] Adicionar ferramenta de simetria horizontal/vertical.
+- [x] Adicionar magic wand baseada em cor/contiguidade.
+- [x] Adicionar lasso ou seleção livre simplificada.
+- [x] Adicionar brush preview antes de aplicar.
+- [x] Adicionar resize canvas e crop por bounds.
+- [x] Garantir acessibilidade mínima em botões e atalhos.
 
 ## Critérios de aceite
 
-- [ ] Usuário edita com zoom/pan sem perder precisão de pixel.
-- [ ] Lock alpha impede alteração em pixels transparentes.
-- [ ] Lock layer impede edição acidental.
-- [ ] Merge down preserva composição visual.
-- [ ] Magic wand seleciona área esperada por cor/contiguidade.
-- [ ] Atalhos principais estão documentados.
-- [ ] Testes cobrem pelo menos lock alpha, merge down e seleção.
+- [x] Usuário edita com zoom/pan sem perder precisão de pixel.
+- [x] Lock alpha impede alteração em pixels transparentes.
+- [x] Lock layer impede edição acidental.
+- [x] Merge down preserva composição visual.
+- [x] Magic wand seleciona área esperada por cor/contiguidade.
+- [x] Atalhos principais estão documentados.
+- [x] Testes cobrem pelo menos lock alpha, merge down e seleção.
 
 ## O que não deve ser feito
 
-- [ ] Não adicionar todas as ferramentas em um único PR sem divisão interna.
-- [ ] Não usar antialiasing em ferramentas pixel art.
-- [ ] Não alterar pixels em camada bloqueada.
-- [ ] Não fazer resize com interpolação suave por padrão.
-- [ ] Não esconder atalhos sem documentação.
+- [x] Não adicionar todas as ferramentas em um único PR sem divisão interna.
+- [x] Não usar antialiasing em ferramentas pixel art.
+- [x] Não alterar pixels em camada bloqueada.
+- [x] Não fazer resize com interpolação suave por padrão.
+- [x] Não esconder atalhos sem documentação.
 
 ## Subtasks sugeridas
 
@@ -82,3 +82,20 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Resultado
+
+- Pan com pointer capture por espaço/botão central e zoom de 1× a 16× ancorado no cursor.
+- Locks de camada/alfa retrocompatíveis no modelo, schema, raster, paleta, seleção e diffs MCP/IA.
+- Merge down, simetria H/V, varinha contígua, laço livre e seleção mascarada no core compartilhado.
+- Preview de pincel e operações de resize/crop por bounds com nearest-neighbor no canvas fixo de 256×256.
+- Controles com nomes/estados ARIA, foco visível, alvos mínimos e atalhos documentados em `docs/editor-shortcuts.md`.
+
+Validação executada em 2026-06-29:
+
+```txt
+npm run typecheck  OK
+npm test           86 testes OK
+npm run build      OK
+npm run test:e2e   13 testes Chromium OK
+```

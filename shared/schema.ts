@@ -82,6 +82,8 @@ export const LayerSchema = z.object({
   name: z.string(),
   visible: z.boolean(),
   opacity: z.number().min(0).max(1),
+  locked: z.boolean().default(false),
+  alphaLocked: z.boolean().default(false),
   pixels: PixelsDataSchema,
 });
 

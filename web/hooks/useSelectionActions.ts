@@ -3,12 +3,13 @@ import {
   activeAssetOf,
   activeFrameOf,
   activeLayerOf,
-  indexOf,
   limitColors as limitProjectColors,
   normalizeProject,
   replaceGlobalColor as replaceProjectColor,
   rotate90Selection,
+  selectionContains,
   selectionBounds,
+  setPixel,
 } from "../../shared/pixel-core.ts";
 import type { Frame, Project, Selection } from "../../shared/pixel-core.ts";
 import { projectFromAsepriteJson } from "../../shared/pro-export.ts";
@@ -21,8 +22,6 @@ import {
   readJsonFile,
 } from "../lib/editor-helpers.ts";
 import type { Clip } from "../types.ts";
-
-const idx = indexOf;
 
 type UpdateProject = (
   mutator: (project: Project) => Project | void,
@@ -78,9 +77,13 @@ export function useSelectionActions({
     if (cut)
       updateProject((draft) => {
         const layer = activeLayerOf(activeFrameOf(draft));
+        if (layer.locked) return;
         for (let y = 0; y < clip.h; y++)
-          for (let x = 0; x < clip.w; x++)
-            layer.pixels[idx(clip.x + x, clip.y + y)] = null;
+          for (let x = 0; x < clip.w; x++) {
+            const relativeIndex = y * clip.w + x;
+            if (clip.selected && !clip.selected[relativeIndex]) continue;
+            setPixel(layer, clip.x + x, clip.y + y, null);
+          }
       });
   }
 
@@ -134,14 +137,20 @@ export function useSelectionActions({
       nextClip = rotate90Selection(clip);
     } else {
       const pixels = new Array(clip.pixels.length).fill(null);
+      const selected = clip.selected
+        ? new Array<boolean>(clip.selected.length).fill(false)
+        : undefined;
       for (let y = 0; y < clip.h; y++)
-        for (let x = 0; x < clip.w; x++)
-          pixels[
+        for (let x = 0; x < clip.w; x++) {
+          const targetIndex =
             kind === "mirrorH"
               ? y * clip.w + (clip.w - 1 - x)
-              : (clip.h - 1 - y) * clip.w + x
-          ] = clip.pixels[y * clip.w + x];
-      nextClip = { ...clip, pixels };
+              : (clip.h - 1 - y) * clip.w + x;
+          pixels[targetIndex] = clip.pixels[y * clip.w + x];
+          if (selected)
+            selected[targetIndex] = Boolean(clip.selected?.[y * clip.w + x]);
+        }
+      nextClip = { ...clip, pixels, selected };
     }
     updateProject((draft) => {
       const layer = activeLayerOf(activeFrameOf(draft));
@@ -161,10 +170,14 @@ export function useSelectionActions({
     if (!bounds) return;
     updateProject((draft) => {
       const layer = activeLayerOf(activeFrameOf(draft));
+      if (layer.locked) return;
       for (let y = 0; y < bounds.h; y++)
         for (let x = 0; x < bounds.w; x++)
-          if ((x + y) % 2 === 0)
-            layer.pixels[idx(bounds.x + x, bounds.y + y)] = color;
+          if (
+            (x + y) % 2 === 0 &&
+            selectionContains(selection, bounds.x + x, bounds.y + y)
+          )
+            setPixel(layer, bounds.x + x, bounds.y + y, color);
     });
   }
 

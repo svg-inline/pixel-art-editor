@@ -13,7 +13,11 @@ export type Tool =
   | "dither"
   | "line"
   | "rect"
-  | "ellipse";
+  | "ellipse"
+  | "wand"
+  | "lasso";
+
+export type SymmetryMode = "none" | "horizontal" | "vertical" | "both";
 
 export type AiOperation =
   | "generate"
@@ -128,7 +132,23 @@ export const TOOL_NAMES: Tool[] = [
   "line",
   "rect",
   "ellipse",
+  "wand",
+  "lasso",
 ];
+
+export const TOOL_LABELS: Record<Tool, string> = {
+  pencil: "Lápis",
+  eraser: "Borracha",
+  bucket: "Balde",
+  picker: "Conta-gotas",
+  select: "Seleção retangular",
+  dither: "Dither",
+  line: "Linha",
+  rect: "Retângulo",
+  ellipse: "Elipse",
+  wand: "Varinha mágica",
+  lasso: "Laço livre",
+};
 
 export const AUTOSAVE_LABELS: Record<AutosaveStatus, string> = {
   idle: "aguardando",

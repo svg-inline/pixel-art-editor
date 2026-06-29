@@ -3,6 +3,9 @@ import {
   activeFrameOf,
   blankFrame,
   blankLayer,
+  cropFrameToBounds,
+  mergeLayerDown,
+  resizeFrameContent,
   syncActiveAnimationMeta,
   uid,
 } from "../../shared/pixel-core.ts";
@@ -41,6 +44,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     updateProject((draft) => {
       const activeFrame = activeFrameOf(draft);
       if (activeFrame.layers.length === 1) return;
+      if (activeFrame.layers.find((layer) => layer.id === id)?.locked) return;
       activeFrame.layers = activeFrame.layers.filter((layer) => layer.id !== id);
       activeFrame.activeLayerId = activeFrame.layers[0].id;
     }, true, "layer.remove", { layerId: id });
@@ -62,6 +66,17 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     });
   }
 
+  function mergeDown(index: number) {
+    updateProject(
+      (draft) => {
+        mergeLayerDown(activeFrameOf(draft), index);
+      },
+      true,
+      "project.change",
+      { operation: "layer.mergeDown", index },
+    );
+  }
+
   function updateLayer(index: number, mutator: (layer: Layer) => void) {
     updateProject((draft) => {
       const activeFrame = activeFrameOf(draft);
@@ -73,6 +88,28 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     updateProject((draft) => {
       mutator(activeFrameOf(draft));
     });
+  }
+
+  function resizeCanvasContent(width: number, height: number) {
+    updateProject(
+      (draft) => {
+        resizeFrameContent(activeFrameOf(draft), width, height);
+      },
+      true,
+      "project.change",
+      { operation: "canvas.resizeContent", width, height },
+    );
+  }
+
+  function cropCanvasToBounds() {
+    updateProject(
+      (draft) => {
+        cropFrameToBounds(activeFrameOf(draft));
+      },
+      true,
+      "project.change",
+      { operation: "canvas.cropToBounds" },
+    );
   }
 
   function addFrameBox(kind: BoxKind) {
@@ -193,8 +230,11 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     addLayer,
     removeLayer,
     moveLayer,
+    mergeDown,
     updateLayer,
     updateActiveFrame,
+    resizeCanvasContent,
+    cropCanvasToBounds,
     addFrameBox,
     setActiveAsset,
     setActiveAnimation,

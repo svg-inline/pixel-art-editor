@@ -45,6 +45,25 @@ button {
 button:hover {
   background: #26364f;
 }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+button,
+summary,
+input[type="checkbox"] {
+  min-height: 24px;
+  min-width: 24px;
+}
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+canvas:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
 button.active,
 .layer.active,
 .frame.active {
@@ -88,10 +107,13 @@ label {
 }
 .stage {
   overflow: auto;
-  display: grid;
-  place-items: start center;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
   padding: 24px;
   background: #151b29;
+  position: relative;
+  overscroll-behavior: contain;
 }
 canvas {
   --checker-size: 8px;
@@ -111,6 +133,15 @@ canvas {
   border: 1px solid #334155;
   cursor: crosshair;
   image-rendering: pixelated;
+  touch-action: none;
+  flex: 0 0 auto;
+  margin: 0 auto;
+}
+.stage.pan-ready canvas {
+  cursor: grab;
+}
+.stage.panning canvas {
+  cursor: grabbing;
 }
 .inline-check {
   display: flex;
@@ -147,6 +178,14 @@ canvas {
 .frame input {
   margin: 3px 0;
   min-width: 0;
+}
+.layer-select {
+  width: 100%;
+  margin: 0 0 4px;
+  text-align: left;
+}
+.layer > label:not(.visually-hidden) {
+  margin-bottom: 0;
 }
 .frame {
   display: grid;
@@ -303,4 +342,66 @@ canvas {
   color: #cbd5e1;
   font-style: normal;
   overflow-wrap: anywhere;
+}
+
+.canvas-resize {
+  border: 1px solid #273244;
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 8px;
+}
+.canvas-resize legend {
+  color: #bfdbfe;
+  padding: 0 4px;
+}
+.shortcuts {
+  border: 1px solid #273244;
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 8px;
+}
+.shortcuts summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.shortcuts dl {
+  margin: 8px 0 0;
+}
+.shortcuts dl div {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr;
+  gap: 8px;
+  padding: 4px 0;
+}
+.shortcuts dt,
+.shortcuts dd {
+  margin: 0;
+}
+kbd {
+  background: #111827;
+  border: 1px solid #64748b;
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

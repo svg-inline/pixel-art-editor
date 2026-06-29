@@ -5,6 +5,8 @@ import {
   indexOf,
   isHex,
   selectionBounds,
+  selectionContains,
+  setPixel,
   SIZE,
   floodFillPixels,
 } from "../../shared/pixel-core.ts";
@@ -62,7 +64,10 @@ export function floodFillFrame(
   color: Pixel,
 ) {
   const layer = frame.layers[layerIndex];
+  if (!layer || layer.locked) return null;
   const pixels = expandPixels(layer.pixels);
+  const start = pixels[idx(x, y)] ?? null;
+  if (layer.alphaLocked && start === null) return null;
   layer.pixels = pixels;
   return floodFillPixels(pixels, x, y, color);
 }
@@ -137,10 +142,18 @@ export function getSelectionPixels(
   if (!bounds) return null;
   const layerPixels = expandPixels(layer.pixels);
   const pixels: PixelArray = [];
+  const selected: boolean[] = [];
   for (let y = 0; y < bounds.h; y++)
-    for (let x = 0; x < bounds.w; x++)
-      pixels.push(layerPixels[idx(bounds.x + x, bounds.y + y)]);
-  return { ...bounds, pixels };
+    for (let x = 0; x < bounds.w; x++) {
+      const included = selectionContains(selection, bounds.x + x, bounds.y + y);
+      selected.push(included);
+      pixels.push(included ? layerPixels[idx(bounds.x + x, bounds.y + y)] : null);
+    }
+  return {
+    ...bounds,
+    pixels,
+    ...(selection?.mask ? { selected } : {}),
+  };
 }
 
 export function pastePixels(
@@ -151,36 +164,51 @@ export function pastePixels(
   eraseSource = false,
 ) {
   if (!clip) return;
-  const pixels = expandPixels(layer.pixels);
-  layer.pixels = pixels;
+  if (layer.locked) return;
   if (eraseSource) {
     for (let y = 0; y < clip.h; y++)
       for (let x = 0; x < clip.w; x++) {
+        const relativeIndex = y * clip.w + x;
+        if (clip.selected && !clip.selected[relativeIndex]) continue;
         const sx = clip.x + x;
         const sy = clip.y + y;
-        if (sx >= 0 && sy >= 0 && sx < SIZE && sy < SIZE)
-          pixels[idx(sx, sy)] = null;
+        setPixel(layer, sx, sy, null);
       }
   }
   for (let y = 0; y < clip.h; y++)
     for (let x = 0; x < clip.w; x++) {
+      const relativeIndex = y * clip.w + x;
+      if (clip.selected && !clip.selected[relativeIndex]) continue;
       const tx = targetX + x;
       const ty = targetY + y;
-      if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE)
-        pixels[idx(tx, ty)] = clip.pixels[y * clip.w + x];
+      setPixel(layer, tx, ty, clip.pixels[relativeIndex]);
     }
 }
 
 export function eraseClipPixels(layer: Layer, clip: Clip) {
-  const pixels = expandPixels(layer.pixels);
-  layer.pixels = pixels;
+  if (layer.locked) return;
   for (let y = 0; y < clip.h; y++)
     for (let x = 0; x < clip.w; x++) {
+      const relativeIndex = y * clip.w + x;
+      if (clip.selected && !clip.selected[relativeIndex]) continue;
       const tx = clip.x + x;
       const ty = clip.y + y;
-      if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE)
-        pixels[idx(tx, ty)] = null;
+      setPixel(layer, tx, ty, null);
     }
+}
+
+export function symmetryPoints(
+  point: Point,
+  symmetry: "none" | "horizontal" | "vertical" | "both",
+) {
+  const points = [point];
+  if (symmetry === "horizontal" || symmetry === "both")
+    points.push({ x: SIZE - 1 - point.x, y: point.y });
+  if (symmetry === "vertical" || symmetry === "both")
+    points.push({ x: point.x, y: SIZE - 1 - point.y });
+  if (symmetry === "both")
+    points.push({ x: SIZE - 1 - point.x, y: SIZE - 1 - point.y });
+  return [...new Map(points.map((item) => [`${item.x}:${item.y}`, item])).values()];
 }
 
 export function isShapeTool(value: Tool): value is ShapeTool {

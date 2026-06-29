@@ -35,6 +35,10 @@ export type Layer = {
   name: string;
   visible: boolean;
   opacity: number;
+  /** Prevents every pixel mutation while keeping layer metadata editable. */
+  locked: boolean;
+  /** Preserves the existing opaque pixel footprint while colors are edited. */
+  alphaLocked: boolean;
   pixels: PixelArray | RlePixels;
 };
 export type Point = { x: number; y: number };
@@ -100,8 +104,19 @@ export type Project = {
   background: ProjectBackground;
   quality?: Record<string, unknown>;
 };
-export type Selection = { x: number; y: number; w: number; h: number };
-export type PixelSelectionClip = Selection & { pixels: PixelArray };
+export type Selection = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Absolute pixel indexes used by non-rectangular selections. */
+  mask?: number[];
+};
+export type PixelSelectionClip = Selection & {
+  pixels: PixelArray;
+  /** Relative selection mask, parallel to pixels. */
+  selected?: boolean[];
+};
 export type ToolResult = { project: Project; message: string };
 
 // ─── Pure utilities ───────────────────────────────────────────────────────────
@@ -185,6 +200,8 @@ export function blankLayer(name = "Layer"): Layer {
     name,
     visible: true,
     opacity: 1,
+    locked: false,
+    alphaLocked: false,
     pixels: new Array(PIXEL_COUNT).fill(null),
   };
 }
@@ -242,6 +259,8 @@ function normalizeFrame(frame: any, frameIndex: number): Frame {
       0,
       1,
     ),
+    locked: layer?.locked === true,
+    alphaLocked: layer?.alphaLocked === true,
     pixels: expandPixels(layer?.pixels),
   }));
   const activeLayerId = normalizedLayers.some(
