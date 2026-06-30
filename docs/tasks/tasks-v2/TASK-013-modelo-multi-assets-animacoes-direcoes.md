@@ -3,7 +3,7 @@
 Prioridade: P2  
 Área: Modelo de dados / Game Pipeline  
 Tipo: Arquitetura de produto  
-Status inicial: Backlog
+Status: Concluída
 
 ## Objetivo
 
@@ -30,25 +30,25 @@ O projeto já tem conceitos de assets/animações, mas precisa ficar sólido par
 
 ## Checklist
 
-- [ ] Definir schema final de `Project`, `Asset`, `Animation`, `Frame`, `Layer`.
-- [ ] Adicionar suporte explícito a direção: N, NE, E, SE, S, SW, W, NW.
-- [ ] Permitir múltiplas animações por asset.
-- [ ] Permitir duração por frame além de FPS global.
-- [ ] Associar pivot/origin por frame ou por animação com override.
-- [ ] Associar hitbox/hurtbox/attackbox por frame.
-- [ ] Adicionar export profiles por asset.
-- [ ] Criar migration para projetos antigos.
-- [ ] Atualizar UI para escolher asset, animação e direção.
-- [ ] Atualizar exports para respeitar animação/direção.
+- [x] Definir schema final de `Project`, `Asset`, `Animation`, `Frame`, `Layer`.
+- [x] Adicionar suporte explícito a direção: N, NE, E, SE, S, SW, W, NW.
+- [x] Permitir múltiplas animações por asset.
+- [x] Permitir duração por frame além de FPS global.
+- [x] Associar pivot/origin por frame ou por animação com override.
+- [x] Associar hitbox/hurtbox/attackbox por frame.
+- [x] Adicionar export profiles por asset.
+- [x] Criar migration para projetos antigos.
+- [x] Atualizar UI para escolher asset, animação e direção.
+- [x] Atualizar exports para respeitar animação/direção.
 
 ## Critérios de aceite
 
-- [ ] Projeto antigo abre corretamente após migration.
-- [ ] Usuário cria um asset com pelo menos idle/walk/attack.
-- [ ] Usuário define direção por animação.
-- [ ] Export gera metadata com animações e direções.
-- [ ] Godot/Unity recebem informações suficientes para reconstruir animações.
-- [ ] Testes cobrem migration e export com múltiplas animações.
+- [x] Projeto antigo abre corretamente após migration.
+- [x] Usuário cria um asset com pelo menos idle/walk/attack.
+- [x] Usuário define direção por animação.
+- [x] Export gera metadata com animações e direções.
+- [x] Godot/Unity recebem informações suficientes para reconstruir animações.
+- [x] Testes cobrem migration e export com múltiplas animações.
 
 ## O que não deve ser feito
 
@@ -104,3 +104,21 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Resultado da implementação
+
+- Schema v3 com migração automática de projetos legados e aliases compatíveis com o schema v2.
+- Pivot padrão por animação, override por frame e coleções explícitas de hurtboxes/attackboxes.
+- Perfis Godot e Unity por asset, incluindo pixels por unidade.
+- Metadados Godot e Unity em layout multi-row, com todas as animações, direções e durações.
+- Pacote ZIP inclui spritesheet da animação ativa e spritesheet completo do asset.
+- O addon/projeto em `godot/` não foi alterado; portanto, não houve mudança de runtime a validar no editor Godot.
+
+Validação executada em 29/06/2026:
+
+```text
+npm run typecheck        OK
+npm run typecheck:strict OK
+npm test                 OK (88 testes)
+npm run build            OK
+```

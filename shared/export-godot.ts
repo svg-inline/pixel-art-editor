@@ -1,9 +1,18 @@
-import { activeAssetOf } from "./animation.ts";
+import {
+  activeAnimationOf,
+  activeAssetOf,
+  frameBoxes,
+  frameBoxesOfKind,
+  frameDurationMs,
+} from "./animation.ts";
 import { expandProject, SIZE, slug } from "./model.ts";
 
 export function godotMetadata(projectInput: any) {
   const project = expandProject(projectInput);
   const activeAsset = activeAssetOf(project);
+  const profile =
+    activeAsset.exportProfiles.find((item) => item.engine === "godot") ||
+    activeAsset.exportProfiles[0];
   const asset = slug(project.godot.asset),
     anim = slug(project.godot.animation);
   const maxFrames = Math.max(
@@ -17,6 +26,7 @@ export function godotMetadata(projectInput: any) {
     direction: animation.direction,
     fps: animation.fps,
     loop: animation.loop,
+    pivot: animation.pivot,
     frames: animation.frames.length,
     layout: "horizontal",
     row,
@@ -25,12 +35,16 @@ export function godotMetadata(projectInput: any) {
       y: row * SIZE,
       w: SIZE,
       h: SIZE,
-      duration: frame.duration || Math.round(1000 / animation.fps),
+      durationMs: frameDurationMs(frame, animation),
+      duration: frameDurationMs(frame, animation),
       pivot: frame.pivot,
-      hitboxes: frame.hitboxes.map((hitbox) => ({
+      pivot_override: frame.pivotOverride,
+      hitboxes: frameBoxes(frame).map((hitbox) => ({
         ...hitbox,
         type: hitbox.kind,
       })),
+      hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
+      attackboxes: frameBoxesOfKind(frame, "attackbox"),
     })),
   }));
   return {
@@ -49,6 +63,8 @@ export function godotMetadata(projectInput: any) {
       height: SIZE * activeAsset.animations.length,
     },
     background: project.background,
+    export_profile: profile,
+    pixels_per_unit: profile?.pixelsPerUnit || SIZE,
     import: {
       filter: false,
       mipmaps: false,
@@ -81,6 +97,7 @@ export function godotMetadata(projectInput: any) {
 
 export function atlasMetadata(projectInput: any) {
   const project = expandProject(projectInput);
+  const animation = activeAnimationOf(project);
   const asset = slug(project.godot.asset),
     anim = slug(project.godot.animation);
   return {
@@ -94,12 +111,16 @@ export function atlasMetadata(projectInput: any) {
         `${anim}_${String(i).padStart(2, "0")}`,
         {
           frame: { x: i * SIZE, y: 0, w: SIZE, h: SIZE },
-          duration: frame.duration || Math.round(1000 / project.godot.fps),
+          durationMs: frameDurationMs(frame, animation),
+          duration: frameDurationMs(frame, animation),
           pivot: frame.pivot,
-          hitboxes: frame.hitboxes.map((hitbox) => ({
+          pivot_override: frame.pivotOverride,
+          hitboxes: frameBoxes(frame).map((hitbox) => ({
             ...hitbox,
             type: hitbox.kind,
           })),
+          hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
+          attackboxes: frameBoxesOfKind(frame, "attackbox"),
         },
       ]),
     ),

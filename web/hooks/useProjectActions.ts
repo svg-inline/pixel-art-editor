@@ -1,4 +1,5 @@
 import {
+  activeAnimationOf,
   activeAssetOf,
   activeFrameOf,
   blankFrame,
@@ -11,6 +12,8 @@ import {
 } from "../../shared/pixel-core.ts";
 import type {
   BoxKind,
+  Direction,
+  ExportProfile,
   Frame,
   Layer,
   Project,
@@ -146,23 +149,85 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     }, false);
   }
 
-  function addAnimation() {
+  function addAsset() {
+    updateProject((draft) => {
+      const assetNumber = draft.assets.length + 1;
+      const direction: Direction = "S";
+      const makeAnimation = (name: string, fps: number, loop: boolean) => ({
+        id: uid(),
+        name,
+        direction,
+        fps,
+        loop,
+        pivot: { x: 128, y: 128 },
+        frames: [blankFrame("Frame 1")],
+      });
+      const animations = [
+        makeAnimation("idle", 6, true),
+        makeAnimation("walk", 8, true),
+        makeAnimation("attack", 10, false),
+      ];
+      const asset = {
+        id: uid(),
+        name: `Asset ${assetNumber}`,
+        palette: [...draft.palette],
+        animations,
+        exportProfiles: [
+          { id: uid(), name: "Godot", engine: "godot" as const, pixelsPerUnit: 256 },
+          { id: uid(), name: "Unity", engine: "unity" as const, pixelsPerUnit: 256 },
+        ],
+      };
+      draft.assets.push(asset);
+      draft.activeAssetId = asset.id;
+      draft.activeAnimationId = animations[0].id;
+      draft.activeFrameId = animations[0].frames[0].id;
+    }, true, "project.change", { operation: "asset.add" });
+  }
+
+  function addAnimation(name?: string) {
     updateProject((draft) => {
       const asset = activeAssetOf(draft);
       const direction = draft.godot.direction;
       const firstFrame = blankFrame(`Frame 1`);
+      const baseName = String(name || `animation ${asset.animations.length + 1}`);
+      const duplicateCount = asset.animations.filter(
+        (item) => item.name === baseName || item.name.startsWith(`${baseName} `),
+      ).length;
       const animation = {
         id: uid(),
-        name: `anim_${asset.animations.length + 1}_${direction.toLowerCase()}`,
+        name: duplicateCount ? `${baseName} ${duplicateCount + 1}` : baseName,
         direction,
         fps: draft.godot.fps,
         loop: draft.godot.loop,
+        pivot: { ...activeAnimationOf(draft).pivot },
         frames: [firstFrame],
       };
       asset.animations.push(animation);
       draft.activeAnimationId = animation.id;
       draft.activeFrameId = firstFrame.id;
     }, true, "project.change", { operation: "animation.add" });
+  }
+
+  function setAnimationPivot(axis: "x" | "y", value: number) {
+    updateProject((draft) => {
+      activeAnimationOf(draft).pivot[axis] = Math.max(0, Math.min(255, value));
+    }, false);
+  }
+
+  function setExportProfileField(
+    engine: ExportProfile["engine"],
+    key: "pixelsPerUnit",
+    value: number,
+  ) {
+    updateProject((draft) => {
+      const asset = activeAssetOf(draft);
+      let profile = asset.exportProfiles.find((item) => item.engine === engine);
+      if (!profile) {
+        profile = { id: uid(), name: engine, engine, pixelsPerUnit: 256 };
+        asset.exportProfiles.push(profile);
+      }
+      profile[key] = Math.max(1, value || 1);
+    }, false);
   }
 
   function setGodotField(
@@ -238,7 +303,10 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     addFrameBox,
     setActiveAsset,
     setActiveAnimation,
+    addAsset,
     addAnimation,
+    setAnimationPivot,
+    setExportProfileField,
     setGodotField,
     setBackgroundField,
     addFrame,

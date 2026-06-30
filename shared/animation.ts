@@ -5,10 +5,47 @@ import {
   uid,
   type Animation,
   type Asset,
+  type BoxKind,
   type Frame,
+  type Hitbox,
   type Layer,
   type Project,
 } from "./model.ts";
+
+export function frameDurationMs(frame: Frame, animation?: Animation) {
+  return Math.max(
+    1,
+    Math.min(
+      5000,
+      Math.round(
+        Number(frame.durationMs ?? frame.duration) ||
+          Math.round(1000 / Math.max(1, animation?.fps || 10)),
+      ),
+    ),
+  );
+}
+
+/** Returns the canonical, de-duplicated compatibility view of all frame boxes. */
+export function frameBoxes(frame: Frame): Hitbox[] {
+  const all = [
+    ...(frame.hitboxes || []),
+    ...(frame.hurtboxes || []).map((box) => ({ ...box, kind: "hurtbox" as const })),
+    ...(frame.attackboxes || []).map((box) => ({
+      ...box,
+      kind: "attackbox" as const,
+    })),
+  ];
+  const seen = new Set<string>();
+  return all.filter((box) => {
+    if (seen.has(box.id)) return false;
+    seen.add(box.id);
+    return true;
+  });
+}
+
+export function frameBoxesOfKind(frame: Frame, kind: BoxKind) {
+  return frameBoxes(frame).filter((box) => box.kind === kind);
+}
 
 export function activeAssetOf(project: Project) {
   return (

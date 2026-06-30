@@ -51,11 +51,21 @@ export type Hitbox = Selection & {
 export type Frame = {
   id: string;
   name: string;
+  /** Canonical per-frame duration. Falls back to the animation FPS. */
+  durationMs: number;
+  /** @deprecated Kept in sync for schema-v2 consumers. */
   duration: number;
   layers: Layer[];
   activeLayerId: string;
   pivot: Point;
+  /** False when `pivot` is inherited from the animation default. */
+  pivotOverride: boolean;
+  /** Snapshot used to detect direct schema-v2 pivot mutations safely. */
+  inheritedPivot: Point;
+  /** All gameplay boxes, retained as the schema-v2 compatibility view. */
   hitboxes: Hitbox[];
+  hurtboxes: Hitbox[];
+  attackboxes: Hitbox[];
 };
 export type GodotMeta = {
   asset: string;
@@ -70,6 +80,8 @@ export type Animation = {
   direction: Direction;
   fps: number;
   loop: boolean;
+  /** Default origin inherited by frames without an explicit pivot. */
+  pivot: Point;
   frames: Frame[];
 };
 export type ExportProfile = {
@@ -91,7 +103,7 @@ export type ProjectBackground = {
   color: string;
 };
 export type Project = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   size: number;
   revision: number;
   assets: Asset[];
@@ -210,11 +222,16 @@ export function blankFrame(name = "Frame 1"): Frame {
   return {
     id: uid(),
     name,
+    durationMs: 100,
     duration: 100,
     layers: [layer],
     activeLayerId: layer.id,
     pivot: { x: Math.floor(SIZE / 2), y: Math.floor(SIZE / 2) },
+    pivotOverride: false,
+    inheritedPivot: { x: Math.floor(SIZE / 2), y: Math.floor(SIZE / 2) },
     hitboxes: [],
+    hurtboxes: [],
+    attackboxes: [],
   };
 }
 
@@ -245,7 +262,45 @@ export function normalizeBoxKind(input: any): BoxKind {
   return "hitbox";
 }
 
-function normalizeFrame(frame: any, frameIndex: number): Frame {
+function normalizePoint(input: any, fallback?: Point): Point {
+  const fallbackX = fallback?.x ?? Math.floor(SIZE / 2);
+  const fallbackY = fallback?.y ?? Math.floor(SIZE / 2);
+  const rawX = Number(input?.x ?? fallbackX);
+  const rawY = Number(input?.y ?? fallbackY);
+  return {
+    x: clamp(
+      Math.round(Number.isFinite(rawX) ? rawX : fallbackX),
+      0,
+      SIZE - 1,
+    ),
+    y: clamp(
+      Math.round(Number.isFinite(rawY) ? rawY : fallbackY),
+      0,
+      SIZE - 1,
+    ),
+  };
+}
+
+function normalizeBox(box: any, index: number, forcedKind?: BoxKind): Hitbox {
+  const kind =
+    forcedKind || normalizeBoxKind(box?.kind || box?.type || box?.name);
+  return {
+    id: box?.id || uid(),
+    name: String(box?.name || `${kind} ${index + 1}`),
+    kind,
+    x: clamp(Math.round(Number(box?.x || 0)), 0, SIZE - 1),
+    y: clamp(Math.round(Number(box?.y || 0)), 0, SIZE - 1),
+    w: clamp(Math.round(Number(box?.w || 1)), 1, SIZE),
+    h: clamp(Math.round(Number(box?.h || 1)), 1, SIZE),
+  };
+}
+
+function normalizeFrame(
+  frame: any,
+  frameIndex: number,
+  animationPivot?: Point,
+  fallbackDuration = 100,
+): Frame {
   const layers =
     Array.isArray(frame?.layers) && frame.layers.length
       ? frame.layers
@@ -268,37 +323,66 @@ function normalizeFrame(frame: any, frameIndex: number): Frame {
   )
     ? frame.activeLayerId
     : normalizedLayers[0].id;
-  const pivot = {
-    x: clamp(
-      Math.round(Number(frame?.pivot?.x ?? Math.floor(SIZE / 2))),
-      0,
-      SIZE - 1,
-    ),
-    y: clamp(
-      Math.round(Number(frame?.pivot?.y ?? Math.floor(SIZE / 2))),
-      0,
-      SIZE - 1,
-    ),
-  };
-  const hitboxes = Array.isArray(frame?.hitboxes)
-    ? frame.hitboxes.map((hitbox: any, hitboxIndex: number) => ({
-        id: hitbox?.id || uid(),
-        name: String(hitbox?.name || `Hitbox ${hitboxIndex + 1}`),
-        kind: normalizeBoxKind(hitbox?.kind || hitbox?.type || hitbox?.name),
-        x: clamp(Math.round(Number(hitbox?.x || 0)), 0, SIZE - 1),
-        y: clamp(Math.round(Number(hitbox?.y || 0)), 0, SIZE - 1),
-        w: clamp(Math.round(Number(hitbox?.w || 1)), 1, SIZE),
-        h: clamp(Math.round(Number(hitbox?.h || 1)), 1, SIZE),
-      }))
-    : [];
+  const hasStoredOverride = frame?.pivotOverride === true;
+  const inheritedPivot = normalizePoint(animationPivot);
+  const previousInheritedPivot = frame?.inheritedPivot
+    ? normalizePoint(frame.inheritedPivot)
+    : undefined;
+  const directLegacyPivotMutation =
+    frame?.pivotOverride === false &&
+    previousInheritedPivot !== undefined &&
+    (frame?.pivot?.x !== previousInheritedPivot.x ||
+      frame?.pivot?.y !== previousInheritedPivot.y);
+  const isUnmarkedLegacyOverride =
+    frame?.pivotOverride === undefined && Boolean(frame?.pivot || frame?.origin);
+  const pivotOverride =
+    hasStoredOverride || isUnmarkedLegacyOverride || directLegacyPivotMutation;
+  const pivot = normalizePoint(
+    pivotOverride ? frame?.pivot || frame?.origin : animationPivot,
+    animationPivot,
+  );
+  const boxInputs = [
+    ...(Array.isArray(frame?.hitboxes)
+      ? frame.hitboxes.map((box: any) => [box])
+      : []),
+    ...(Array.isArray(frame?.hurtboxes)
+      ? frame.hurtboxes.map((box: any) => [box, "hurtbox"])
+      : []),
+    ...(Array.isArray(frame?.attackboxes)
+      ? frame.attackboxes.map((box: any) => [box, "attackbox"])
+      : []),
+  ] as [any, BoxKind?][];
+  const seenBoxIds = new Set<string>();
+  const hitboxes = boxInputs
+    .map(([box, kind], index) => normalizeBox(box, index, kind))
+    .filter((box) => {
+      if (seenBoxIds.has(box.id)) return false;
+      seenBoxIds.add(box.id);
+      return true;
+    });
+  const rawDuration = Number(
+    frame?.duration ?? frame?.durationMs ?? fallbackDuration,
+  );
+  const durationMs = clamp(
+    // Prefer the legacy alias when both are present so schema-v2 callers that
+    // mutate `duration` continue to work; normalized output re-syncs both.
+    Math.round(Number.isFinite(rawDuration) ? rawDuration : fallbackDuration),
+    1,
+    5000,
+  );
   return {
     id: frame?.id || uid(),
     name: String(frame?.name || `Frame ${frameIndex + 1}`),
-    duration: clamp(Math.round(Number(frame?.duration || 100)), 1, 5000),
+    durationMs,
+    duration: durationMs,
     layers: normalizedLayers,
     activeLayerId,
     pivot,
+    pivotOverride,
+    inheritedPivot,
     hitboxes,
+    hurtboxes: hitboxes.filter((box) => box.kind === "hurtbox"),
+    attackboxes: hitboxes.filter((box) => box.kind === "attackbox"),
   };
 }
 
@@ -309,6 +393,13 @@ function normalizeAnimation(
 ): Animation {
   const fallbackDirection = normalizeDirection(fallbackGodot?.direction, "W");
   const direction = normalizeDirection(animation?.direction, fallbackDirection);
+  const rawFps = Number(animation?.fps ?? fallbackGodot?.fps ?? 6);
+  const fps = clamp(
+    Math.round(Number.isFinite(rawFps) ? rawFps : 6),
+    1,
+    60,
+  );
+  const pivot = normalizePoint(animation?.pivot || animation?.origin);
   const frames =
     Array.isArray(animation?.frames) && animation.frames.length
       ? animation.frames
@@ -321,13 +412,12 @@ function normalizeAnimation(
         `animation_${animationIndex + 1}`,
     ),
     direction,
-    fps: clamp(
-      Math.round(Number(animation?.fps ?? fallbackGodot?.fps ?? 6)),
-      1,
-      60,
-    ),
+    fps,
     loop: animation?.loop ?? fallbackGodot?.loop ?? true,
-    frames: frames.map(normalizeFrame),
+    pivot,
+    frames: frames.map((frame: any, index: number) =>
+      normalizeFrame(frame, index, pivot, Math.round(1000 / fps)),
+    ),
   };
 }
 
@@ -367,10 +457,13 @@ function normalizeAsset(
                 ? profile.engine
                 : "godot",
             pixelsPerUnit: Number.isFinite(Number(profile?.pixelsPerUnit))
-              ? Number(profile.pixelsPerUnit)
+              ? Math.max(1, Number(profile.pixelsPerUnit))
               : SIZE,
           }))
-        : [{ id: uid(), name: "Godot", engine: "godot", pixelsPerUnit: SIZE }],
+        : [
+            { id: uid(), name: "Godot", engine: "godot", pixelsPerUnit: SIZE },
+            { id: uid(), name: "Unity", engine: "unity", pixelsPerUnit: SIZE },
+          ],
   };
 }
 
@@ -396,6 +489,7 @@ export function expandProject(input: any): Project {
       {
         id: uid(),
         name: "Frame 1",
+        durationMs: 100,
         duration: 100,
         layers,
         activeLayerId: p.activeLayerId || layers[0].id,
@@ -460,13 +554,15 @@ export function expandProject(input: any): Project {
     fps: activeAnimation.fps,
     loop: activeAnimation.loop,
   } satisfies GodotMeta;
-  p.schemaVersion = 2;
+  p.schemaVersion = 3;
   p.background = normalizeBackground(p.background);
   p.quality = p.quality || {};
   return p as Project;
 }
 
 export const normalizeProject = expandProject;
+/** Explicit migration entry point for legacy layer, schema-v1 and schema-v2 projects. */
+export const migrateProject = expandProject;
 
 export function compactProject(input: any) {
   const p = expandProject(input) as any;

@@ -46,12 +46,14 @@ test("normalizes legacy layer projects and compact RLE pixels", () => {
   assert.equal(project.frames[0].layers[0].pixels[indexOf(0, 0)], "#abcdef");
   assert.equal(project.godot.direction, "W");
   assert.equal(project.godot.fps, 60);
-  assert.equal(project.schemaVersion, 2);
+  assert.equal(project.schemaVersion, 3);
   assert.equal(project.assets.length, 1);
   assert.equal(activeAssetOf(project).animations.length, 1);
   assert.equal(activeAnimationOf(project).frames, project.frames);
   assert.deepEqual(project.frames[0].pivot, { x: 128, y: 128 });
   assert.deepEqual(project.frames[0].hitboxes, []);
+  assert.equal(project.frames[0].durationMs, project.frames[0].duration);
+  assert.equal(activeAssetOf(project).exportProfiles.length, 2);
 });
 
 test("reports shared colors and QA warnings consistently", () => {
@@ -192,6 +194,90 @@ test("normalizes v2 assets, animations, pivot and hitboxes", () => {
   assert.equal(godot.collision[0].type, "hurtbox");
   assert.equal(atlas.frames.walk_s_00.hitboxes[0].type, "hurtbox");
   assert.equal(unity.frames[0].hitboxes[0].type, "hurtbox");
+});
+
+test("migrates schema v2 frame data into explicit v3 durations and box groups", () => {
+  const project = expandProject({
+    schemaVersion: 2,
+    assets: [
+      {
+        id: "hero",
+        name: "Hero",
+        animations: [
+          {
+            id: "attack-e",
+            name: "attack",
+            direction: "E",
+            fps: 12,
+            loop: false,
+            pivot: { x: 80, y: 144 },
+            frames: [
+              {
+                id: "attack-1",
+                duration: 75,
+                attackboxes: [
+                  { id: "sword", name: "Sword", x: 140, y: 90, w: 30, h: 18 },
+                ],
+                hurtboxes: [
+                  { id: "body", name: "Body", x: 90, y: 80, w: 28, h: 60 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(project.schemaVersion, 3);
+  assert.equal(project.frames[0].durationMs, 75);
+  assert.deepEqual(project.frames[0].pivot, { x: 80, y: 144 });
+  assert.equal(project.frames[0].pivotOverride, false);
+  assert.equal(project.frames[0].hurtboxes[0].kind, "hurtbox");
+  assert.equal(project.frames[0].attackboxes[0].kind, "attackbox");
+  assert.equal(project.frames[0].hitboxes.length, 2);
+
+  project.assets[0].animations[0].pivot = { x: 96, y: 160 };
+  const inherited = expandProject(project);
+  assert.deepEqual(inherited.frames[0].pivot, { x: 96, y: 160 });
+});
+
+test("Godot and Unity exports preserve multiple animations and directions", () => {
+  const project = expandProject({
+    activeAssetId: "hero",
+    activeAnimationId: "walk-s",
+    assets: [
+      {
+        id: "hero",
+        name: "Hero",
+        exportProfiles: [
+          { id: "godot", name: "Godot", engine: "godot", pixelsPerUnit: 64 },
+          { id: "unity", name: "Unity", engine: "unity", pixelsPerUnit: 32 },
+        ],
+        animations: [
+          { id: "idle-n", name: "idle", direction: "N", fps: 6, frames: [{}] },
+          {
+            id: "walk-s",
+            name: "walk",
+            direction: "S",
+            fps: 8,
+            frames: [{ durationMs: 140 }],
+          },
+          { id: "attack-e", name: "attack", direction: "E", fps: 10, frames: [{}] },
+        ],
+      },
+    ],
+  });
+  const godot = godotMetadata(project);
+  const unity = unityMetadata(project);
+
+  assert.deepEqual(godot.animations.map((item) => item.direction), ["N", "S", "E"]);
+  assert.equal(godot.animations[1].frame_rects[0].durationMs, 140);
+  assert.equal(godot.pixels_per_unit, 64);
+  assert.deepEqual(unity.animations.map((item) => item.direction), ["N", "S", "E"]);
+  assert.equal(unity.animations[1].frames[0].durationMs, 140);
+  assert.equal(unity.frames, unity.animations[1].frames);
+  assert.equal(unity.pixelsPerUnit, 32);
 });
 
 test("prompt parser honors explicit animation and direction fields", () => {

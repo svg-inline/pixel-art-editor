@@ -37,7 +37,7 @@ export function Timeline({
       <div className="status">
         {activeAnimation.name} · {activeAnimation.direction} · frame{" "}
         {Math.min(previewFrame + 1, project.frames.length)}/
-        {project.frames.length} · {project.frames[previewFrame]?.duration || 0}
+        {project.frames.length} · {project.frames[previewFrame]?.durationMs || 0}
         ms
         {activeAnimation.loop ? " · loop" : " · sem loop"}
       </div>
@@ -70,16 +70,18 @@ export function Timeline({
               type="number"
               min="1"
               max="5000"
-              value={frame.duration}
+              value={frame.durationMs}
               title="Duração em ms"
               onClick={(event) => event.stopPropagation()}
               onChange={(event) =>
                 updateProject((draft) => {
-                  draft.frames[index].duration = clamp(
+                  const durationMs = clamp(
                     +event.target.value || 1,
                     1,
                     5000,
                   );
+                  draft.frames[index].durationMs = durationMs;
+                  draft.frames[index].duration = durationMs;
                 })
               }
             />

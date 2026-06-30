@@ -342,7 +342,10 @@ function App() {
           activeAnimation={activeAnimation}
           setActiveAsset={projectActions.setActiveAsset}
           setActiveAnimation={projectActions.setActiveAnimation}
+          addAsset={projectActions.addAsset}
           addAnimation={projectActions.addAnimation}
+          setAnimationPivot={projectActions.setAnimationPivot}
+          setExportProfileField={projectActions.setExportProfileField}
           setGodotField={projectActions.setGodotField}
           exportPng={exportActions.exportPng}
           exportSpritesheet={exportActions.exportSpritesheet}
@@ -380,6 +383,7 @@ function App() {
 
         <GameDataPanel
           frame={frame}
+          animationPivot={activeAnimation.pivot}
           showGameData={showGameData}
           setShowGameData={setShowGameData}
           updateActiveFrame={projectActions.updateActiveFrame}

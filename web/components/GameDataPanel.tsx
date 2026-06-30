@@ -3,6 +3,7 @@ import type { BoxKind, Frame } from "../../shared/pixel-core.ts";
 
 type GameDataPanelProps = {
   frame: Frame;
+  animationPivot: { x: number; y: number };
   showGameData: boolean;
   setShowGameData: (show: boolean) => void;
   updateActiveFrame: (mutator: (frame: Frame) => void) => void;
@@ -11,6 +12,7 @@ type GameDataPanelProps = {
 
 export function GameDataPanel({
   frame,
+  animationPivot,
   showGameData,
   setShowGameData,
   updateActiveFrame,
@@ -39,6 +41,7 @@ export function GameDataPanel({
               onChange={(event) =>
                 updateActiveFrame((draft) => {
                   draft.pivot.x = clamp(+event.target.value || 0, 0, SIZE - 1);
+                  draft.pivotOverride = true;
                 })
               }
             />
@@ -53,11 +56,23 @@ export function GameDataPanel({
               onChange={(event) =>
                 updateActiveFrame((draft) => {
                   draft.pivot.y = clamp(+event.target.value || 0, 0, SIZE - 1);
+                  draft.pivotOverride = true;
                 })
               }
             />
           </label>
         </div>
+        <button
+          disabled={!frame.pivotOverride}
+          onClick={() =>
+            updateActiveFrame((draft) => {
+              draft.pivot = { ...animationPivot };
+              draft.pivotOverride = false;
+            })
+          }
+        >
+          usar pivot padrão da animação
+        </button>
         <div className="grid-buttons">
           <button onClick={() => addFrameBox("hitbox")}>+ hitbox</button>
           <button onClick={() => addFrameBox("hurtbox")}>+ hurtbox</button>

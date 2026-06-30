@@ -6,6 +6,9 @@ import {
   compositeFrameRgba,
   expandPixels,
   expandProject,
+  frameBoxes,
+  frameBoxesOfKind,
+  frameDurationMs,
   godotMetadata,
   SIZE,
   slug,
@@ -290,7 +293,7 @@ export function encodeGifFromProject(projectInput: unknown) {
       compositeFrameRgba(frame, project.background),
     ),
     durations: animation.frames.map(
-      (frame) => frame.duration || Math.round(1000 / animation.fps),
+      (frame) => frameDurationMs(frame, animation),
     ),
     loop: animation.loop,
   });
@@ -311,9 +314,13 @@ export function asepriteJson(projectInput: unknown) {
           trimmed: false,
           spriteSourceSize: { x: 0, y: 0, w: SIZE, h: SIZE },
           sourceSize: { w: SIZE, h: SIZE },
-          duration: frame.duration || Math.round(1000 / animation.fps),
+          durationMs: frameDurationMs(frame, animation),
+          duration: frameDurationMs(frame, animation),
           pivot: frame.pivot,
-          hitboxes: frame.hitboxes,
+          pivotOverride: frame.pivotOverride,
+          hitboxes: frameBoxes(frame),
+          hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
+          attackboxes: frameBoxesOfKind(frame, "attackbox"),
         },
       ]),
     ),
@@ -383,10 +390,14 @@ export function tilemapMetadata(projectInput: unknown, tileSize = 16) {
     return {
       frameId: frame.id,
       name: frame.name,
-      duration: frame.duration,
+      durationMs: frameDurationMs(frame, animation),
+      duration: frameDurationMs(frame, animation),
       tiles: rows,
       pivot: frame.pivot,
-      hitboxes: frame.hitboxes,
+      pivotOverride: frame.pivotOverride,
+      hitboxes: frameBoxes(frame),
+      hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
+      attackboxes: frameBoxesOfKind(frame, "attackbox"),
     };
   });
   return {

@@ -345,6 +345,7 @@ server.tool(
       direction: direction as Direction,
       fps,
       loop,
+      pivot: { x: 128, y: 128 },
       frames: [frame],
     };
     asset.animations.push(animation);

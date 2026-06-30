@@ -92,11 +92,16 @@ export const LayerSchema = z.object({
 export const FrameSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
+  durationMs: z.number().int().min(1).max(5000),
   duration: z.number().int().min(1).max(5000),
   layers: z.array(LayerSchema).min(1),
   activeLayerId: z.string().min(1),
   pivot: PointSchema,
+  pivotOverride: z.boolean(),
+  inheritedPivot: PointSchema,
   hitboxes: z.array(HitboxSchema),
+  hurtboxes: z.array(HitboxSchema),
+  attackboxes: z.array(HitboxSchema),
 });
 
 // ─── Animation ────────────────────────────────────────────────────────────────
@@ -107,6 +112,7 @@ export const AnimationSchema = z.object({
   direction: DirectionSchema,
   fps: z.number().int().min(1).max(60),
   loop: z.boolean(),
+  pivot: PointSchema,
   frames: z.array(FrameSchema).min(1).max(64),
 });
 
@@ -149,7 +155,7 @@ export const ProjectBackgroundSchema = z.object({
 // ─── Full normalized project ──────────────────────────────────────────────────
 
 export const ProjectSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   size: z.literal(256),
   revision: z.number().int().nonnegative(),
   assets: z.array(AssetSchema).min(1),
@@ -224,12 +230,14 @@ export const FrameUpdatedOperationSchema = z.object({
     name: z.string(),
     duration: z.number().int().min(1).max(5000),
     pivot: PointSchema.optional(),
+    pivotOverride: z.boolean().optional(),
     hitboxes: z.array(HitboxSchema).optional(),
   }),
   after: z.object({
     name: z.string(),
     duration: z.number().int().min(1).max(5000),
     pivot: PointSchema.optional(),
+    pivotOverride: z.boolean().optional(),
     hitboxes: z.array(HitboxSchema).optional(),
   }),
 });

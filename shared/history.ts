@@ -57,12 +57,14 @@ export type FramePatch = {
     name: string;
     duration: number;
     pivot: Project["frames"][number]["pivot"];
+    pivotOverride: boolean;
     hitboxes: Project["frames"][number]["hitboxes"];
   };
   after: {
     name: string;
     duration: number;
     pivot: Project["frames"][number]["pivot"];
+    pivotOverride: boolean;
     hitboxes: Project["frames"][number]["hitboxes"];
   };
 };
@@ -217,6 +219,7 @@ function framePatchFromFrames(
     beforeFrame.name === afterFrame.name &&
     beforeFrame.duration === afterFrame.duration &&
     JSON.stringify(beforeFrame.pivot) === JSON.stringify(afterFrame.pivot) &&
+    beforeFrame.pivotOverride === afterFrame.pivotOverride &&
     JSON.stringify(beforeFrame.hitboxes) === JSON.stringify(afterFrame.hitboxes)
   )
     return null;
@@ -227,12 +230,14 @@ function framePatchFromFrames(
       name: beforeFrame.name,
       duration: beforeFrame.duration,
       pivot: clone(beforeFrame.pivot),
+      pivotOverride: beforeFrame.pivotOverride,
       hitboxes: clone(beforeFrame.hitboxes),
     },
     after: {
       name: afterFrame.name,
       duration: afterFrame.duration,
       pivot: clone(afterFrame.pivot),
+      pivotOverride: afterFrame.pivotOverride,
       hitboxes: clone(afterFrame.hitboxes),
     },
   };
@@ -484,6 +489,7 @@ export function applyPatch(projectInput: unknown, patch: HistoryPatch): Project 
     frame.name = patch.after.name;
     frame.duration = patch.after.duration;
     frame.pivot = clone(patch.after.pivot);
+    frame.pivotOverride = patch.after.pivotOverride;
     frame.hitboxes = clone(patch.after.hitboxes);
     return expandProject(project);
   }
@@ -518,6 +524,7 @@ export function revertPatch(projectInput: unknown, patch: HistoryPatch): Project
     frame.name = patch.before.name;
     frame.duration = patch.before.duration;
     frame.pivot = clone(patch.before.pivot);
+    frame.pivotOverride = patch.before.pivotOverride;
     frame.hitboxes = clone(patch.before.hitboxes);
     return expandProject(project);
   }

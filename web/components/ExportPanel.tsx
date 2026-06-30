@@ -1,7 +1,6 @@
 import type { ChangeEvent } from "react";
 import { DIRECTIONS } from "../../shared/pixel-core.ts";
 import type { Project } from "../../shared/pixel-core.ts";
-import { DEFAULT_ANIMS } from "../types.ts";
 
 type ExportPanelProps = {
   project: Project;
@@ -9,7 +8,14 @@ type ExportPanelProps = {
   activeAnimation: Project["assets"][number]["animations"][number];
   setActiveAsset: (id: string) => void;
   setActiveAnimation: (id: string) => void;
-  addAnimation: () => void;
+  addAsset: () => void;
+  addAnimation: (name?: string) => void;
+  setAnimationPivot: (axis: "x" | "y", value: number) => void;
+  setExportProfileField: (
+    engine: "godot" | "unity" | "generic",
+    key: "pixelsPerUnit",
+    value: number,
+  ) => void;
   setGodotField: (
     key: keyof Project["godot"],
     value: Project["godot"][keyof Project["godot"]],
@@ -34,7 +40,10 @@ export function ExportPanel({
   activeAnimation,
   setActiveAsset,
   setActiveAnimation,
+  addAsset,
   addAnimation,
+  setAnimationPivot,
+  setExportProfileField,
   setGodotField,
   exportPng,
   exportSpritesheet,
@@ -65,6 +74,7 @@ export function ExportPanel({
           ))}
         </select>
       </label>
+      <button onClick={addAsset}>+ asset (idle/walk/attack)</button>
       <label>
         Animação ativa{" "}
         <select
@@ -78,7 +88,11 @@ export function ExportPanel({
           ))}
         </select>
       </label>
-      <button onClick={addAnimation}>+ animação</button>
+      <div className="grid-buttons">
+        <button onClick={() => addAnimation("idle")}>+ idle</button>
+        <button onClick={() => addAnimation("walk")}>+ walk</button>
+        <button onClick={() => addAnimation("attack")}>+ attack</button>
+      </div>
       <div className="status">
         Modelo: {project.assets.length} asset(s) ·{" "}
         {activeAsset.animations.length} animação(ões) ·{" "}
@@ -93,37 +107,60 @@ export function ExportPanel({
       </label>
       <label>
         Animação{" "}
-        <select
-          value={project.godot.animation.split("_")[0]}
-          onChange={(event) =>
-            setGodotField(
-              "animation",
-              `${event.target.value}_${project.godot.direction.toLowerCase()}`,
-            )
-          }
-        >
-          {DEFAULT_ANIMS.map((animation) => (
-            <option key={animation}>{animation}</option>
-          ))}
-        </select>
+        <input
+          value={project.godot.animation}
+          onChange={(event) => setGodotField("animation", event.target.value)}
+        />
       </label>
       <label>
         Direção{" "}
         <select
           value={project.godot.direction}
-          onChange={(event) => {
-            setGodotField("direction", event.target.value);
-            setGodotField(
-              "animation",
-              `${project.godot.animation.split("_")[0]}_${event.target.value.toLowerCase()}`,
-            );
-          }}
+          onChange={(event) => setGodotField("direction", event.target.value)}
         >
           {DIRECTIONS.map((direction) => (
             <option key={direction}>{direction}</option>
           ))}
         </select>
       </label>
+      <div className="two-cols">
+        {(["x", "y"] as const).map((axis) => (
+          <label key={axis}>
+            Pivot padrão {axis.toUpperCase()}{" "}
+            <input
+              type="number"
+              min="0"
+              max="255"
+              value={activeAnimation.pivot[axis]}
+              onChange={(event) =>
+                setAnimationPivot(axis, +event.target.value || 0)
+              }
+            />
+          </label>
+        ))}
+      </div>
+      {(["godot", "unity"] as const).map((engine) => {
+        const profile = activeAsset.exportProfiles.find(
+          (item) => item.engine === engine,
+        );
+        return (
+          <label key={engine}>
+            {engine} pixels/unit{" "}
+            <input
+              type="number"
+              min="1"
+              value={profile?.pixelsPerUnit || 256}
+              onChange={(event) =>
+                setExportProfileField(
+                  engine,
+                  "pixelsPerUnit",
+                  +event.target.value || 1,
+                )
+              }
+            />
+          </label>
+        );
+      })}
       <label>
         FPS{" "}
         <input

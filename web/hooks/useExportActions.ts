@@ -1,4 +1,5 @@
 import {
+  activeAssetOf,
   atlasMetadata,
   godotMetadata,
   SIZE,
@@ -52,6 +53,30 @@ export function useExportActions({
     return sheet;
   }
 
+  function assetSpritesheetCanvas(projectInput: Project) {
+    const asset = activeAssetOf(projectInput);
+    const columns = Math.max(
+      1,
+      ...asset.animations.map((animation) => animation.frames.length),
+    );
+    const sheet = document.createElement("canvas");
+    sheet.width = SIZE * columns;
+    sheet.height = SIZE * asset.animations.length;
+    const ctx = sheet.getContext("2d");
+    if (!ctx) return sheet;
+    ctx.imageSmoothingEnabled = false;
+    asset.animations.forEach((animation, row) =>
+      animation.frames.forEach((item, column) =>
+        ctx.drawImage(
+          renderFrameFresh(item, projectInput.background),
+          column * SIZE,
+          row * SIZE,
+        ),
+      ),
+    );
+    return sheet;
+  }
+
   function exportSpritesheet() {
     downloadCanvas(
       `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`,
@@ -90,6 +115,10 @@ export function useExportActions({
       {
         name: `png/${asset}_${animation}_sheet.png`,
         data: await canvasBytes(spritesheetCanvas(project)),
+      },
+      {
+        name: `png/${asset}_sheet.png`,
+        data: await canvasBytes(assetSpritesheetCanvas(project)),
       },
       ...professionalMetadataFiles(project),
     ]);
