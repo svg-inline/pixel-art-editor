@@ -1,3 +1,6 @@
+import { normalizeExportProfiles, type ExportProfile } from "./schemas.ts";
+export type { ExportProfile } from "./schemas.ts";
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 export const SIZE = 256;
@@ -85,19 +88,6 @@ export type Animation = {
   /** Distinguishes a configured origin from the legacy canvas-center fallback. */
   pivotExplicit: boolean;
   frames: Frame[];
-};
-export type ExportProfile = {
-  id: string;
-  name: string;
-  engine: "godot" | "unity" | "generic";
-  pixelsPerUnit?: number;
-  qaMode: "warning" | "block";
-  binaryAlpha: boolean;
-  maxColors: number;
-  minMargin: number;
-  centerTolerance: number;
-  requirePivot: boolean;
-  requiredBoxes: BoxKind[];
 };
 export type Asset = {
   id: string;
@@ -458,48 +448,7 @@ function normalizeAsset(
     animations: animations.map((animation: any, i: number) =>
       normalizeAnimation(animation, i, fallbackGodot),
     ),
-    exportProfiles:
-      Array.isArray(asset?.exportProfiles) && asset.exportProfiles.length
-        ? asset.exportProfiles.map((profile: any, profileIndex: number) => ({
-            id: profile?.id || uid(),
-            name: String(profile?.name || `Profile ${profileIndex + 1}`),
-            engine:
-              profile?.engine === "unity" || profile?.engine === "generic"
-                ? profile.engine
-                : "godot",
-            pixelsPerUnit: Number.isFinite(Number(profile?.pixelsPerUnit))
-              ? Math.max(1, Number(profile.pixelsPerUnit))
-              : SIZE,
-            qaMode: profile?.qaMode === "block" ? "block" : "warning",
-            binaryAlpha: profile?.binaryAlpha !== false,
-            maxColors: clamp(Math.round(Number(profile?.maxColors) || 32), 2, 256),
-            minMargin: clamp(Math.round(Number(profile?.minMargin) || 1), 0, 64),
-            centerTolerance: clamp(
-              Math.round(Number(profile?.centerTolerance) || 14),
-              0,
-              128,
-            ),
-            requirePivot: profile?.requirePivot !== false,
-            requiredBoxes: Array.isArray(profile?.requiredBoxes)
-              ? profile.requiredBoxes.filter((kind: unknown): kind is BoxKind =>
-                  kind === "hitbox" || kind === "hurtbox" || kind === "attackbox",
-                )
-              : [],
-          }))
-        : [
-            {
-              id: uid(), name: "Godot", engine: "godot", pixelsPerUnit: SIZE,
-              qaMode: "warning", binaryAlpha: true, maxColors: 32,
-              minMargin: 1, centerTolerance: 14, requirePivot: true,
-              requiredBoxes: [],
-            },
-            {
-              id: uid(), name: "Unity", engine: "unity", pixelsPerUnit: SIZE,
-              qaMode: "warning", binaryAlpha: true, maxColors: 32,
-              minMargin: 1, centerTolerance: 14, requirePivot: true,
-              requiredBoxes: [],
-            },
-          ],
+    exportProfiles: normalizeExportProfiles(asset?.exportProfiles),
   };
 }
 

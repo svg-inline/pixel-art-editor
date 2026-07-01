@@ -8,7 +8,7 @@ import {
   colorsUsed,
   qualityReport,
 } from "../shared/pixel-core.ts";
-import type { ExportProfile, Selection } from "../shared/pixel-core.ts";
+import type { Selection } from "../shared/pixel-core.ts";
 import { AiPanel } from "./components/AiPanel.tsx";
 import { CanvasEditor } from "./components/CanvasEditor.tsx";
 import { ExportPanel } from "./components/ExportPanel.tsx";
@@ -101,7 +101,7 @@ function App() {
   const [replaceFrom, setReplaceFrom] = useState("#ffffff");
   const [replaceTo, setReplaceTo] = useState("#000000");
   const [previewFrame, setPreviewFrame] = useState(0);
-  const [qaEngine, setQaEngine] = useState<ExportProfile["engine"]>("godot");
+  const [qaProfileId, setQaProfileId] = useState("godot_4");
 
   const { bridgeStatus, setBridgeStatus } = useBridge({
     projectRef,
@@ -134,9 +134,9 @@ function App() {
     [project, maxColors],
   );
   const exportReport = useMemo(() => {
-    const profile = activeAsset.exportProfiles.find((item) => item.engine === qaEngine) || activeAsset.exportProfiles[0];
+    const profile = activeAsset.exportProfiles.find((item) => item.id === qaProfileId || item.preset === qaProfileId) || activeAsset.exportProfiles[0];
     return qualityReport(project, profile);
-  }, [project, activeAsset, qaEngine]);
+  }, [project, activeAsset, qaProfileId]);
   const usedColors = useMemo(() => colorsUsed(project), [project]);
   const effectiveGridStep = useMemo(
     () =>
@@ -354,8 +354,8 @@ function App() {
           setExportProfileField={projectActions.setExportProfileField}
           setGodotField={projectActions.setGodotField}
           report={exportReport}
-          qaEngine={qaEngine}
-          setQaEngine={setQaEngine}
+          qaProfileId={qaProfileId}
+          setQaProfileId={setQaProfileId}
           exportQaStatus={exportActions.exportQaStatus}
           exportPng={exportActions.exportPng}
           exportSpritesheet={exportActions.exportSpritesheet}

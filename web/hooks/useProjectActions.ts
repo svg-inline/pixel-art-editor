@@ -6,6 +6,7 @@ import {
   blankLayer,
   cropFrameToBounds,
   mergeLayerDown,
+  normalizeExportProfiles,
   resizeFrameContent,
   syncActiveAnimationMeta,
   uid,
@@ -177,10 +178,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         name: `Asset ${assetNumber}`,
         palette: [...draft.palette],
         animations,
-        exportProfiles: [
-          { id: uid(), name: "Godot", engine: "godot" as const, pixelsPerUnit: 256, qaMode: "warning" as const, binaryAlpha: true, maxColors: 32, minMargin: 1, centerTolerance: 14, requirePivot: true, requiredBoxes: [] },
-          { id: uid(), name: "Unity", engine: "unity" as const, pixelsPerUnit: 256, qaMode: "warning" as const, binaryAlpha: true, maxColors: 32, minMargin: 1, centerTolerance: 14, requirePivot: true, requiredBoxes: [] },
-        ],
+        exportProfiles: normalizeExportProfiles(undefined),
       };
       draft.assets.push(asset);
       draft.activeAssetId = asset.id;
@@ -223,29 +221,27 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
   }
 
   function setExportProfileField(
-    engine: ExportProfile["engine"],
-    key: keyof Pick<ExportProfile, "pixelsPerUnit" | "qaMode" | "binaryAlpha" | "maxColors" | "minMargin" | "centerTolerance" | "requirePivot" | "requiredBoxes">,
-    value: number | boolean | string | BoxKind[],
+    profileId: string,
+    key: keyof ExportProfile,
+    value: ExportProfile[keyof ExportProfile],
   ) {
     updateProject((draft) => {
       const asset = activeAssetOf(draft);
-      let profile = asset.exportProfiles.find((item) => item.engine === engine);
-      if (!profile) {
-        profile = {
-          id: uid(), name: engine, engine, pixelsPerUnit: 256,
-          qaMode: "warning", binaryAlpha: true, maxColors: 32,
-          minMargin: 1, centerTolerance: 14, requirePivot: true,
-          requiredBoxes: [],
-        };
-        asset.exportProfiles.push(profile);
-      }
+      const profile = asset.exportProfiles.find((item) => item.id === profileId || item.preset === profileId);
+      if (!profile) return;
       if (key === "pixelsPerUnit") profile.pixelsPerUnit = Math.max(1, Number(value) || 1);
+      else if (key === "scale") profile.scale = Math.max(1, Math.min(16, Math.floor(Number(value) || 1)));
+      else if (key === "padding" || key === "spacing") profile[key] = Math.max(0, Math.min(256, Math.floor(Number(value) || 0)));
       else if (key === "maxColors") profile.maxColors = Math.max(2, Math.min(256, Number(value) || 2));
       else if (key === "minMargin") profile.minMargin = Math.max(0, Math.min(64, Number(value) || 0));
       else if (key === "centerTolerance") profile.centerTolerance = Math.max(0, Math.min(128, Number(value) || 0));
       else if (key === "requiredBoxes") profile.requiredBoxes = value as BoxKind[];
+      else if (key === "directions") profile.directions = value as ExportProfile["directions"];
+      else if (key === "scope") profile.scope = value === "all_animations" ? "all_animations" : "active_animation";
+      else if (key === "background") profile.background = value as ExportProfile["background"];
+      else if (key === "crop") profile.crop = value as ExportProfile["crop"];
       else if (key === "qaMode") profile.qaMode = value === "block" ? "block" : "warning";
-      else profile[key] = Boolean(value);
+      else if (key === "trim" || key === "binaryAlpha" || key === "requirePivot") profile[key] = Boolean(value);
     }, false);
   }
 

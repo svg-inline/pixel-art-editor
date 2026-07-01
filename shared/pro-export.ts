@@ -15,6 +15,8 @@ import {
   unityMetadata,
   type Project,
 } from "./pixel-core.ts";
+import { boxInExportedFrame, exportProfileOf, pointInExportedFrame, scaleRgbaNearest, spritesheetPlan } from "./export-profiles.ts";
+import type { ExportPresetId, ExportProfile } from "./schemas.ts";
 
 const encoder = new TextEncoder();
 
@@ -277,21 +279,49 @@ export function encodeGifRgbaFrames(input: {
           nearestColorIndex(map, colors, rgba[i], rgba[i + 1], rgba[i + 2]),
         );
     }
-    out.push(8, ...gifSubBlocks(packLzwCodes(indices)));
+    out.push(8);
+    for (const byte of gifSubBlocks(packLzwCodes(indices))) out.push(byte);
   });
   out.push(0x3b);
   return new Uint8Array(out);
 }
 
-export function encodeGifFromProject(projectInput: unknown) {
+export function encodeGifFromProject(
+  projectInput: unknown,
+  profileInput: ExportProfile | ExportPresetId | string = "web_preview",
+) {
   const project = expandProject(projectInput);
   const animation = activeAnimationOf(project);
+  const profile = typeof profileInput === "string" ? exportProfileOf(project, profileInput) : profileInput;
+  const plan = spritesheetPlan(project, profile);
+  const placements = plan.frames.filter((item) => item.animationId === animation.id);
+  const crop = profile.trim && placements.length
+    ? {
+        x: Math.min(...placements.map((item) => item.source.x)),
+        y: Math.min(...placements.map((item) => item.source.y)),
+        w: 0,
+        h: 0,
+      }
+    : profile.crop || { x: 0, y: 0, w: SIZE, h: SIZE };
+  if (profile.trim && placements.length) {
+    const right = Math.max(...placements.map((item) => item.source.x + item.source.w));
+    const bottom = Math.max(...placements.map((item) => item.source.y + item.source.h));
+    crop.w = right - crop.x;
+    crop.h = bottom - crop.y;
+  }
+  const frames = animation.frames.map((frame) => {
+    const source = compositeFrameRgba(frame, plan.background);
+    const cropped = new Uint8Array(crop.w * crop.h * 4);
+    for (let y = 0; y < crop.h; y++) {
+      const start = ((crop.y + y) * SIZE + crop.x) * 4;
+      cropped.set(source.subarray(start, start + crop.w * 4), y * crop.w * 4);
+    }
+    return scaleRgbaNearest(cropped, crop.w, crop.h, profile.scale);
+  });
   return encodeGifRgbaFrames({
-    width: SIZE,
-    height: SIZE,
-    frames: animation.frames.map((frame) =>
-      compositeFrameRgba(frame, project.background),
-    ),
+    width: crop.w * profile.scale,
+    height: crop.h * profile.scale,
+    frames,
     durations: animation.frames.map(
       (frame) => frameDurationMs(frame, animation),
     ),
@@ -304,33 +334,44 @@ export function asepriteJson(projectInput: unknown) {
   const asset = activeAssetOf(project);
   const animation = activeAnimationOf(project);
   const anim = slug(animation.name);
+  const profile = exportProfileOf(project, "aseprite_json");
+  const plan = spritesheetPlan(project, profile);
   return {
     frames: Object.fromEntries(
-      animation.frames.map((frame, index) => [
+      animation.frames.map((frame, index) => {
+        const placement = plan.frames.find((item) => item.frame.id === frame.id)!;
+        return [
         `${anim}_${String(index).padStart(2, "0")}.png`,
         {
-          frame: { x: index * SIZE, y: 0, w: SIZE, h: SIZE },
+          frame: placement.destination,
           rotated: false,
-          trimmed: false,
-          spriteSourceSize: { x: 0, y: 0, w: SIZE, h: SIZE },
-          sourceSize: { w: SIZE, h: SIZE },
+          trimmed: placement.trimmed,
+          spriteSourceSize: placement.source,
+          sourceSize: placement.sourceSize,
           durationMs: frameDurationMs(frame, animation),
           duration: frameDurationMs(frame, animation),
           pivot: frame.pivot,
+          pivotInSprite: pointInExportedFrame(frame.pivot, placement),
           pivotOverride: frame.pivotOverride,
           hitboxes: frameBoxes(frame),
           hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
           attackboxes: frameBoxesOfKind(frame, "attackbox"),
+          exportBoxes: frameBoxes(frame).map((box) => ({
+            ...boxInExportedFrame(box, placement), type: box.kind,
+          })),
         },
-      ]),
+      ];}),
     ),
     meta: {
       app: "pixel-art-mcp",
       version: "2.0.0",
       image: `${slug(asset.name)}_${anim}_sheet.png`,
       format: "RGBA8888",
-      size: { w: SIZE * animation.frames.length, h: SIZE },
-      scale: "1",
+      size: { w: plan.width, h: plan.height },
+      scale: String(profile.scale),
+      padding: profile.padding,
+      spacing: profile.spacing,
+      background: plan.background,
       frameTags: [
         {
           name: animation.name,
@@ -446,5 +487,50 @@ export function professionalMetadataFiles(projectInput: unknown) {
       name: `${asset}_${anim}.gif`,
       data: encodeGifFromProject(project),
     },
+  ] satisfies ZipFile[];
+}
+
+export function exportPackageFiles(
+  projectInput: unknown,
+  preset: ExportPresetId,
+  png: Uint8Array,
+) {
+  const project = expandProject(projectInput);
+  const profile = exportProfileOf(project, preset);
+  const plan = spritesheetPlan(project, profile);
+  const asset = slug(project.godot.asset);
+  const animation = slug(project.godot.animation);
+  const stem = profile.scope === "all_animations" ? asset : `${asset}_${animation}`;
+  const metadata = preset === "godot_4"
+    ? godotMetadata(project)
+    : preset === "unity_2d"
+      ? unityMetadata(project)
+      : preset === "aseprite_json"
+        ? asepriteJson(project)
+        : atlasMetadata(project, profile);
+  if (preset === "aseprite_json" && (metadata as any)?.meta)
+    delete (metadata as any).meta.pixelArtProject;
+  const metadataName = preset === "godot_4"
+    ? `${asset}.animations.json`
+    : preset === "unity_2d"
+      ? `${asset}.unity.json`
+      : preset === "aseprite_json"
+        ? `${stem}.aseprite.json`
+        : `${stem}.atlas.json`;
+  const readme = [
+    `# Export ${profile.name}`,
+    "",
+    `Preset: ${profile.preset}`,
+    `Spritesheet: ${stem}_sheet.png (${plan.width}x${plan.height})`,
+    `Escala: ${profile.scale}x (nearest-neighbor)`,
+    `Padding/spacing: ${profile.padding}/${profile.spacing}px`,
+    `Animações: ${[...new Set(plan.frames.map((frame) => `${frame.animationName} [${frame.direction}]`))].join(", ")}`,
+    "",
+    "Importe o PNG sem filtro/interpolação. O JSON contém frames, duração, direção, pivot e boxes.",
+  ].join("\n");
+  return [
+    { name: `${stem}_sheet.png`, data: png },
+    { name: metadataName, data: JSON.stringify(metadata, null, 2) },
+    { name: "README.md", data: readme },
   ] satisfies ZipFile[];
 }

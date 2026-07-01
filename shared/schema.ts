@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PixelArray, RlePixels } from "./model.ts";
+import { ExportProfileSchema as CanonicalExportProfileSchema } from "./schemas.ts";
 
 export const HexColorSchema = z
   .string()
@@ -119,19 +120,7 @@ export const AnimationSchema = z.object({
 
 // ─── Export profile ───────────────────────────────────────────────────────────
 
-export const ExportProfileSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  engine: z.enum(["godot", "unity", "generic"]),
-  pixelsPerUnit: z.number().positive().optional(),
-  qaMode: z.enum(["warning", "block"]),
-  binaryAlpha: z.boolean(),
-  maxColors: z.number().int().min(2).max(256),
-  minMargin: z.number().int().min(0).max(64),
-  centerTolerance: z.number().int().min(0).max(128),
-  requirePivot: z.boolean(),
-  requiredBoxes: z.array(BoxKindSchema),
-});
+export const ExportProfileSchema = CanonicalExportProfileSchema;
 
 // ─── Asset ────────────────────────────────────────────────────────────────────
 

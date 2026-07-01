@@ -1,5 +1,6 @@
 export * from "./animation.ts";
 export * from "./export-godot.ts";
+export * from "./export-profiles.ts";
 export * from "./export-unity.ts";
 export * from "./model.ts";
 export * from "./palette.ts";
@@ -8,4 +9,5 @@ export * from "./qa.ts";
 export * from "./raster.ts";
 export * from "./render.ts";
 export * from "./render-optimization.ts";
+export * from "./schemas.ts";
 export * from "./selection.ts";

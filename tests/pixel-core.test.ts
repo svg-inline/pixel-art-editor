@@ -53,7 +53,10 @@ test("normalizes legacy layer projects and compact RLE pixels", () => {
   assert.deepEqual(project.frames[0].pivot, { x: 128, y: 128 });
   assert.deepEqual(project.frames[0].hitboxes, []);
   assert.equal(project.frames[0].durationMs, project.frames[0].duration);
-  assert.equal(activeAssetOf(project).exportProfiles.length, 2);
+  assert.equal(activeAssetOf(project).exportProfiles.length, 6);
+  assert.deepEqual(activeAssetOf(project).exportProfiles.map((profile) => profile.preset), [
+    "generic_png", "spritesheet_grid", "godot_4", "unity_2d", "aseprite_json", "web_preview",
+  ]);
 });
 
 test("reports shared colors and QA warnings consistently", () => {

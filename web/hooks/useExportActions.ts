@@ -1,20 +1,22 @@
 import { useState } from "react";
 import {
-  activeAssetOf,
   atlasMetadata,
   compareRenderedFrame,
   godotMetadata,
   qualityReport,
   SIZE,
   slug,
+  spritesheetPlan,
+  exportProfileOf,
+  validateExportProfile,
   unityMetadata,
 } from "../../shared/pixel-core.ts";
-import type { Frame, Project } from "../../shared/pixel-core.ts";
+import type { ExportPresetId, Frame, Project } from "../../shared/pixel-core.ts";
 import {
   asepriteJson,
   encodeGifFromProject,
   encodeZip,
-  professionalMetadataFiles,
+  exportPackageFiles,
   tilemapMetadata,
 } from "../../shared/pro-export.ts";
 import { renderFrameFresh } from "../canvas-renderer.ts";
@@ -44,9 +46,9 @@ export function useExportActions({
     mismatchedPixels: number;
   } | null>(null);
 
-  function preflight(kind: string, engine: "godot" | "unity" | "generic" = "godot") {
-    const asset = activeAssetOf(project);
-    const profile = asset.exportProfiles.find((item) => item.engine === engine) || asset.exportProfiles[0];
+  function preflight(kind: string, preset: ExportPresetId = "generic_png") {
+    const profile = exportProfileOf(project, preset);
+    const validation = validateExportProfile(project, profile);
     const report = qualityReport(project, profile);
     const canvas = renderFrameFresh(frame, project.background);
     const context = canvas.getContext("2d");
@@ -59,9 +61,11 @@ export function useExportActions({
           canvas.height,
         )
       : { matches: false, dimensionsMatch: false, mismatchedPixels: SIZE * SIZE };
-    const blocked = !parity.matches || !report.canExport;
+    const blocked = !validation.valid || !parity.matches || !report.canExport;
     const message = !parity.matches
       ? `Export bloqueado: PNG diverge do projeto em ${parity.mismatchedPixels} pixel(s).`
+      : !validation.valid
+        ? `Export bloqueado: ${validation.issues.join(" ")}`
       : blocked
         ? `Export bloqueado pelo perfil: ${report.errors.length} erro(s) de QA.`
         : report.issues.length
@@ -80,54 +84,48 @@ export function useExportActions({
   }
 
   function exportPng() {
-    if (!preflight("PNG")) return;
+    if (!preflight("PNG", "generic_png")) return;
+    const profile = exportProfileOf(project, "generic_png");
+    const source = renderFrameFresh(frame, profile.background.mode === "project" ? project.background : {
+      mode: profile.background.mode === "color" ? "color" : "transparent",
+      color: profile.background.color,
+    });
+    const placement = spritesheetPlan(project, profile).frames.find((item) => item.frame.id === frame.id);
+    const crop = placement?.source || profile.crop || { x: 0, y: 0, w: SIZE, h: SIZE };
+    const output = document.createElement("canvas");
+    output.width = crop.w * profile.scale + profile.padding * 2;
+    output.height = crop.h * profile.scale + profile.padding * 2;
+    const context = output.getContext("2d");
+    if (context) {
+      context.imageSmoothingEnabled = false;
+      context.drawImage(source, crop.x, crop.y, crop.w, crop.h, profile.padding, profile.padding, crop.w * profile.scale, crop.h * profile.scale);
+    }
     const filename = `${slug(project.godot.asset)}_${slug(project.godot.animation)}_f${frameIndex + 1}.png`;
     downloadCanvas(
       filename,
-      renderFrameFresh(frame, project.background),
+      output,
     );
     recordExport("png", filename, "image/png");
   }
 
-  function spritesheetCanvas(projectInput: Project) {
+  function spritesheetCanvas(projectInput: Project, preset: ExportPresetId = "spritesheet_grid") {
+    const plan = spritesheetPlan(projectInput, preset);
     const sheet = document.createElement("canvas");
-    sheet.width = SIZE * projectInput.frames.length;
-    sheet.height = SIZE;
+    sheet.width = plan.width;
+    sheet.height = plan.height;
     const ctx = sheet.getContext("2d");
     if (!ctx) return sheet;
     ctx.imageSmoothingEnabled = false;
-    projectInput.frames.forEach((item, index) =>
-      ctx.drawImage(renderFrameFresh(item, projectInput.background), index * SIZE, 0),
-    );
-    return sheet;
-  }
-
-  function assetSpritesheetCanvas(projectInput: Project) {
-    const asset = activeAssetOf(projectInput);
-    const columns = Math.max(
-      1,
-      ...asset.animations.map((animation) => animation.frames.length),
-    );
-    const sheet = document.createElement("canvas");
-    sheet.width = SIZE * columns;
-    sheet.height = SIZE * asset.animations.length;
-    const ctx = sheet.getContext("2d");
-    if (!ctx) return sheet;
-    ctx.imageSmoothingEnabled = false;
-    asset.animations.forEach((animation, row) =>
-      animation.frames.forEach((item, column) =>
-        ctx.drawImage(
-          renderFrameFresh(item, projectInput.background),
-          column * SIZE,
-          row * SIZE,
-        ),
-      ),
-    );
+    plan.frames.forEach((item) => {
+      const source = renderFrameFresh(item.frame, plan.background);
+      ctx.drawImage(source, item.source.x, item.source.y, item.source.w, item.source.h,
+        item.destination.x, item.destination.y, item.destination.w, item.destination.h);
+    });
     return sheet;
   }
 
   function exportSpritesheet() {
-    if (!preflight("Spritesheet")) return;
+    if (!preflight("Spritesheet", "spritesheet_grid")) return;
     const filename = `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`;
     downloadCanvas(
       filename,
@@ -137,20 +135,20 @@ export function useExportActions({
   }
 
   async function exportWebp() {
-    if (!preflight("WebP")) return;
+    if (!preflight("WebP", "web_preview")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}_sheet.webp`;
     downloadBytes(
       filename,
-      await canvasBytes(spritesheetCanvas(project), "image/webp"),
+      await canvasBytes(spritesheetCanvas(project, "web_preview"), "image/webp"),
       "image/webp",
     );
     recordExport("webp", filename, "image/webp");
   }
 
   function exportGif() {
-    if (!preflight("GIF")) return;
+    if (!preflight("GIF", "web_preview")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.gif`;
@@ -162,32 +160,19 @@ export function useExportActions({
     recordExport("gif", filename, "image/gif");
   }
 
-  async function exportZip() {
-    if (!preflight("ZIP")) return;
+  async function exportZip(preset: ExportPresetId = "godot_4") {
+    if (!preflight("ZIP", preset)) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
-    const zip = encodeZip([
-      {
-        name: `png/${asset}_${animation}_f${frameIndex + 1}.png`,
-        data: await canvasBytes(renderFrameFresh(frame, project.background)),
-      },
-      {
-        name: `png/${asset}_${animation}_sheet.png`,
-        data: await canvasBytes(spritesheetCanvas(project)),
-      },
-      {
-        name: `png/${asset}_sheet.png`,
-        data: await canvasBytes(assetSpritesheetCanvas(project)),
-      },
-      ...professionalMetadataFiles(project),
-    ]);
+    const png = await canvasBytes(spritesheetCanvas(project, preset));
+    const zip = encodeZip(exportPackageFiles(project, preset, png));
     const filename = `${asset}_${animation}_export.zip`;
     downloadBytes(filename, zip, "application/zip");
     recordExport("zip", filename, "application/zip");
   }
 
   function exportAsepriteJson() {
-    if (!preflight("Aseprite JSON", "generic")) return;
+    if (!preflight("Aseprite JSON", "aseprite_json")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.aseprite.json`;
@@ -199,7 +184,7 @@ export function useExportActions({
   }
 
   function exportTilemapJson() {
-    if (!preflight("Tilemap JSON", "generic")) return;
+    if (!preflight("Tilemap JSON", "spritesheet_grid")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.tilemap.json`;
@@ -211,7 +196,7 @@ export function useExportActions({
   }
 
   function exportAtlasJson() {
-    if (!preflight("Atlas JSON")) return;
+    if (!preflight("Atlas JSON", "spritesheet_grid")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.atlas.json`;
@@ -223,7 +208,7 @@ export function useExportActions({
   }
 
   function exportGodotJson() {
-    if (!preflight("Godot JSON", "godot")) return;
+    if (!preflight("Godot JSON", "godot_4")) return;
     const asset = slug(project.godot.asset);
     const filename = `${asset}.animations.json`;
     downloadText(
@@ -234,7 +219,7 @@ export function useExportActions({
   }
 
   function exportUnityJson() {
-    if (!preflight("Unity JSON", "unity")) return;
+    if (!preflight("Unity JSON", "unity_2d")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.unity.json`;

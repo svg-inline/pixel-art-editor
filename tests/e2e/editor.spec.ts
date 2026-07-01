@@ -252,10 +252,27 @@ test.describe("Exportação", () => {
     await expect(page.locator("#export-qa-title")).toHaveText("QA antes do export");
     await expect(page.locator(".qa-summary")).toContainText("Frame vazio");
 
+    await page.getByLabel("Perfil").selectOption({ label: "PNG genérico" });
     await page.getByLabel("Política").selectOption("block");
     await page.locator("button", { hasText: "PNG frame" }).click();
 
     await expect(page.locator(".export-status.blocked")).toContainText("Export bloqueado pelo perfil");
+  });
+
+  test("configura geometria, fundo, crop e direção por preset", async ({ page }) => {
+    await page.getByLabel("Perfil").selectOption({ label: "Spritesheet grid" });
+    await page.getByLabel("Escala inteira").fill("3");
+    await page.getByLabel("Padding").fill("4");
+    await page.getByLabel("Spacing").fill("2");
+    await page.locator("#export-background-mode").selectOption("transparent");
+    await page.getByLabel("trim por conteúdo").check();
+    await page.getByLabel("crop personalizado").check();
+    await page.getByLabel("S", { exact: true }).check();
+
+    await expect(page.getByLabel("Escala inteira")).toHaveValue("3");
+    await expect(page.getByLabel("Crop W")).toHaveValue("256");
+    await expect(page.getByLabel("S", { exact: true })).toBeChecked();
+    await expect(page.locator("button", { hasText: "ZIP pacote (Spritesheet grid)" })).toBeVisible();
   });
 
   test("exporta spritesheet PNG dispara download", async ({ page }) => {

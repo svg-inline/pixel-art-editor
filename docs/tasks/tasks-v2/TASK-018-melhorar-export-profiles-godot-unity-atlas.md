@@ -3,7 +3,7 @@
 Prioridade: P2  
 Área: Exportação / Game Pipeline  
 Tipo: Feature profissional  
-Status inicial: Backlog
+Status: Concluída em 2026-06-30
 
 ## Objetivo
 
@@ -30,24 +30,24 @@ O projeto já exporta diversos formatos, mas precisa consolidar perfis para evit
 
 ## Checklist
 
-- [ ] Definir schema de `ExportProfile`.
-- [ ] Criar presets: `generic_png`, `spritesheet_grid`, `godot_4`, `unity_2d`, `aseprite_json`, `web_preview`.
-- [ ] Permitir configurar escala, padding, spacing, trim/crop e background.
-- [ ] Garantir nearest-neighbor em escalas inteiras.
-- [ ] Gerar metadata consistente para animações, frames, direções, pivot e boxes.
-- [ ] Validar projeto antes do export conforme perfil.
-- [ ] Criar ZIP com PNG + JSON + README curto do export.
-- [ ] Adicionar testes snapshot de metadata.
-- [ ] Adicionar teste comparando dimensões esperadas de spritesheet.
+- [x] Definir schema de `ExportProfile`.
+- [x] Criar presets: `generic_png`, `spritesheet_grid`, `godot_4`, `unity_2d`, `aseprite_json`, `web_preview`.
+- [x] Permitir configurar escala, padding, spacing, trim/crop e background.
+- [x] Garantir nearest-neighbor em escalas inteiras.
+- [x] Gerar metadata consistente para animações, frames, direções, pivot e boxes.
+- [x] Validar projeto antes do export conforme perfil.
+- [x] Criar ZIP com PNG + JSON + README curto do export.
+- [x] Adicionar testes snapshot de metadata.
+- [x] Adicionar teste comparando dimensões esperadas de spritesheet.
 
 ## Critérios de aceite
 
-- [ ] Cada perfil gera arquivos previsíveis.
-- [ ] Godot e Unity recebem metadata compatível com suas necessidades.
-- [ ] Spritesheet tem dimensões corretas com padding/spacing.
-- [ ] Export respeita animação/direção selecionada.
-- [ ] ZIP final contém todos os arquivos necessários e nada de runtime interno.
-- [ ] Testes cobrem pelo menos Godot, Unity e spritesheet genérico.
+- [x] Cada perfil gera arquivos previsíveis.
+- [x] Godot e Unity recebem metadata compatível com suas necessidades.
+- [x] Spritesheet tem dimensões corretas com padding/spacing.
+- [x] Export respeita animação/direção selecionada.
+- [x] ZIP final contém todos os arquivos necessários e nada de runtime interno.
+- [x] Testes cobrem pelo menos Godot, Unity e spritesheet genérico.
 
 ## O que não deve ser feito
 
@@ -79,3 +79,23 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Resultado da implementação
+
+- `ExportProfile` passou a ter schema Zod canônico, migração dos perfis antigos e os seis presets mínimos.
+- PNG, spritesheet, WebP, GIF, atlas, Godot, Unity, Aseprite e ZIP usam configuração comum de escala inteira, padding, spacing, trim/crop, fundo, escopo e direções.
+- Um plano único de spritesheet define tanto o canvas quanto os retângulos dos metadados. Pivôs e boxes mantêm coordenadas de origem e também recebem coordenadas transformadas para o frame exportado.
+- O pacote ZIP por preset contém somente spritesheet PNG, metadata JSON adaptada e `README.md`; o projeto interno do editor não é incluído.
+- O painel permite escolher e configurar cada preset, enquanto o preflight combina validação estrutural, QA do perfil e paridade do PNG.
+
+O addon e o projeto em `godot/` não foram alterados. O comportamento esperado permanece: importar a textura com filtro e mipmaps desativados, usando os retângulos, durações, direções, pivôs e boxes do JSON. Por não haver mudança no runtime/addon Godot, não foi necessário abrir e regravar o projeto no editor.
+
+Validação executada em 30/06/2026:
+
+```text
+npm run typecheck        OK
+npm run typecheck:strict OK
+npm test                 OK (103 testes)
+npm run build            OK
+npm run test:e2e         OK (16 fluxos Chromium)
+```

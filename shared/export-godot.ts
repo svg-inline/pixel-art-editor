@@ -6,20 +6,19 @@ import {
   frameDurationMs,
 } from "./animation.ts";
 import { expandProject, SIZE, slug } from "./model.ts";
+import { boxInExportedFrame, exportProfileOf, pointInExportedFrame, spritesheetPlan } from "./export-profiles.ts";
+import type { ExportPresetId, ExportProfile } from "./schemas.ts";
 
 export function godotMetadata(projectInput: any) {
   const project = expandProject(projectInput);
   const activeAsset = activeAssetOf(project);
-  const profile =
-    activeAsset.exportProfiles.find((item) => item.engine === "godot") ||
-    activeAsset.exportProfiles[0];
+  const profile = exportProfileOf(project, "godot_4");
   const asset = slug(project.godot.asset),
     anim = slug(project.godot.animation);
-  const maxFrames = Math.max(
-    1,
-    ...activeAsset.animations.map((animation) => animation.frames.length),
-  );
-  const animations = activeAsset.animations.map((animation, row) => ({
+  const plan = spritesheetPlan(project, profile);
+  const animations = activeAsset.animations
+    .filter((animation) => plan.frames.some((item) => item.animationId === animation.id))
+    .map((animation) => ({
     id: animation.id,
     name: slug(animation.name),
     source_name: animation.name,
@@ -29,15 +28,21 @@ export function godotMetadata(projectInput: any) {
     pivot: animation.pivot,
     frames: animation.frames.length,
     layout: "horizontal",
-    row,
-    frame_rects: animation.frames.map((frame, i) => ({
-      x: i * SIZE,
-      y: row * SIZE,
-      w: SIZE,
-      h: SIZE,
+    row: plan.frames.find((item) => item.animationId === animation.id)?.row || 0,
+    frame_rects: animation.frames.map((frame, i) => {
+      const placement = plan.frames.find((item) => item.animationId === animation.id && item.frameIndex === i)!;
+      return ({
+      x: placement.destination.x,
+      y: placement.destination.y,
+      w: placement.destination.w,
+      h: placement.destination.h,
+      source_rect: placement.source,
+      source_size: placement.sourceSize,
+      trimmed: placement.trimmed,
       durationMs: frameDurationMs(frame, animation),
       duration: frameDurationMs(frame, animation),
       pivot: frame.pivot,
+      pivot_in_frame: pointInExportedFrame(frame.pivot, placement),
       pivot_override: frame.pivotOverride,
       hitboxes: frameBoxes(frame).map((hitbox) => ({
         ...hitbox,
@@ -45,7 +50,10 @@ export function godotMetadata(projectInput: any) {
       })),
       hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
       attackboxes: frameBoxesOfKind(frame, "attackbox"),
-    })),
+      export_hitboxes: frameBoxes(frame).map((hitbox) => ({
+        ...boxInExportedFrame(hitbox, placement), type: hitbox.kind,
+      })),
+    });}),
   }));
   return {
     asset,
@@ -53,16 +61,20 @@ export function godotMetadata(projectInput: any) {
     source_asset: activeAsset.name,
     engine: "godot",
     godot_version: "4.x",
-    frame_width: SIZE,
-    frame_height: SIZE,
+    frame_width: SIZE * profile.scale,
+    frame_height: SIZE * profile.scale,
     sheet: {
       layout: "animation_rows",
-      columns: maxFrames,
-      rows: activeAsset.animations.length,
-      width: SIZE * maxFrames,
-      height: SIZE * activeAsset.animations.length,
+      columns: plan.columns,
+      rows: plan.rows,
+      width: plan.width,
+      height: plan.height,
+      padding: profile.padding,
+      spacing: profile.spacing,
+      scale: profile.scale,
+      trim: profile.trim,
     },
-    background: project.background,
+    background: plan.background,
     export_profile: profile,
     pixels_per_unit: profile?.pixelsPerUnit || SIZE,
     import: {
@@ -95,25 +107,43 @@ export function godotMetadata(projectInput: any) {
   };
 }
 
-export function atlasMetadata(projectInput: any) {
+export function atlasMetadata(projectInput: any, profileInput: ExportProfile | ExportPresetId | string = "spritesheet_grid") {
   const project = expandProject(projectInput);
   const animation = activeAnimationOf(project);
+  const activeAsset = activeAssetOf(project);
   const asset = slug(project.godot.asset),
     anim = slug(project.godot.animation);
+  const profile = typeof profileInput === "string" ? exportProfileOf(project, profileInput) : profileInput;
+  const plan = spritesheetPlan(project, profile);
   return {
     meta: {
       image: `${asset}_${anim}_sheet.png`,
-      size: { w: SIZE * project.frames.length, h: SIZE },
-      scale: 1,
+      size: { w: plan.width, h: plan.height },
+      scale: profile.scale,
+      padding: profile.padding,
+      spacing: profile.spacing,
+      trim: profile.trim,
+      background: plan.background,
     },
     frames: Object.fromEntries(
-      project.frames.map((frame, i) => [
-        `${anim}_${String(i).padStart(2, "0")}`,
+      plan.frames.map((placement) => {
+        const frame = placement.frame;
+        const sourceAnimation = activeAsset.animations.find((item) => item.id === placement.animationId) || animation;
+        const frameName = plan.rows > 1 ? slug(sourceAnimation.name) : anim;
+        return [
+        `${frameName}_${String(placement.frameIndex).padStart(2, "0")}`,
         {
-          frame: { x: i * SIZE, y: 0, w: SIZE, h: SIZE },
-          durationMs: frameDurationMs(frame, animation),
-          duration: frameDurationMs(frame, animation),
+          frame: placement.destination,
+          rotated: false,
+          trimmed: placement.trimmed,
+          spriteSourceSize: placement.source,
+          sourceSize: placement.sourceSize,
+          animation: sourceAnimation.name,
+          direction: sourceAnimation.direction,
+          durationMs: frameDurationMs(frame, sourceAnimation),
+          duration: frameDurationMs(frame, sourceAnimation),
           pivot: frame.pivot,
+          pivotInSprite: pointInExportedFrame(frame.pivot, placement),
           pivot_override: frame.pivotOverride,
           hitboxes: frameBoxes(frame).map((hitbox) => ({
             ...hitbox,
@@ -121,8 +151,11 @@ export function atlasMetadata(projectInput: any) {
           })),
           hurtboxes: frameBoxesOfKind(frame, "hurtbox"),
           attackboxes: frameBoxesOfKind(frame, "attackbox"),
+          exportBoxes: frameBoxes(frame).map((box) => ({
+            ...boxInExportedFrame(box, placement), type: box.kind,
+          })),
         },
-      ]),
+      ];}),
     ),
   };
 }
