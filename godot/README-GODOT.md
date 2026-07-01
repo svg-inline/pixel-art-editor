@@ -1,56 +1,93 @@
-# Godot 4 — Pixel Art MCP
+# Godot 4 — addon Pixel Art MCP
 
-Agora existem duas formas de importar.
+O addon conecta o editor Godot 4 à bridge local, baixa o spritesheet e a metadata do asset selecionado e cria um recurso `SpriteFrames` com FPS, loop e regiões corretas.
 
-## 1. Addon com dock
+## Pré-requisitos
 
-Copie a pasta:
+- Godot 4.x;
+- projeto Pixel Art MCP instalado com `npm ci`;
+- bridge ativa com `npm run bridge` (ou `npm run dev`).
+
+## Instalação
+
+Copie a pasta completa:
 
 ```txt
 godot/addons/pixel_art_mcp/
 ```
 
-para o seu projeto Godot em:
+para o projeto Godot:
 
 ```txt
 res://addons/pixel_art_mcp/
+├── pixel_art_mcp_plugin.gd
+└── plugin.cfg
 ```
 
-Ative em `Project > Project Settings > Plugins > Pixel Art MCP`.
+No Godot, abra **Project > Project Settings > Plugins**, localize **Pixel Art MCP** e altere o status para **Enable**. O dock **Pixel Art MCP** aparece no lado direito do editor.
 
-Validação rápida: depois de copiar o addon, abra `Project > Project Settings > Plugins` e confirme que `Pixel Art MCP` aparece sem erro de parser. Ative o plugin, abra o dock, use `Listar assets da bridge` e depois `Importar asset completo` com a bridge local em execução.
+## Conexão e importação
 
-O dock permite:
+1. Inicie a bridge na raiz deste repositório com `npm run bridge`.
+2. No dock, mantenha **Bridge URL** como `http://127.0.0.1:8787`, salvo se você alterou `PIXEL_BRIDGE_PORT`.
+3. Se `PIXEL_BRIDGE_TOKEN` estiver definido, informe exatamente o mesmo valor no campo **Token**.
+4. Clique em **Listar assets da bridge** e selecione um asset.
+5. Opcionalmente, clique em **Exibir spritesheet do asset**.
+6. Escolha a pasta-base de destino. O padrão é `res://assets/pixel_art`.
+7. Clique em **Importar asset**. Para substituir arquivos já existentes, use **Reimportar (sobrescrever)**.
 
-- enviar prompt para a bridge local `http://127.0.0.1:8787`;
-- listar assets disponíveis na bridge;
-- exibir preview PNG;
-- atualizar metadata Godot exportada pelo backend;
-- importar o asset completo, baixando spritesheet PNG e metadata;
-- criar `SpriteFrames .tres` com animações, FPS e loop do metadata.
-
-Estrutura esperada no projeto Godot:
+Com o destino padrão e um asset chamado `hero`, o addon cria:
 
 ```txt
-res://assets/<asset>/
-├─ spritesheets/
-│  ├─ <asset>_sheet.png
-│  ├─ <asset>_sheet.png.pixel_art_import.json
-│  └─ <asset>_<animation>_sheet.png
-└─ metadata/
-   ├─ <asset>_<animation>.atlas.json
-   └─ <asset>.animations.json
+res://assets/pixel_art/hero/
+├── hero.png
+├── hero.png.import
+├── hero.json
+├── hero_collision.json       # somente quando houver dados de colisão
+└── hero_spriteframes.tres
 ```
 
-O import ajusta `rendering/textures/canvas_textures/default_texture_filter` para nearest/pixel-perfect e salva um JSON lateral com as configurações de importação esperadas. O metadata preserva duração dos frames, pivot e hitboxes/hurtboxes/attackboxes quando existirem.
+O addon configura a textura como lossless, sem mipmaps e apropriada para pixel art antes de pedir a reimportação. O `SpriteFrames` preserva animações, FPS e loop informados pela metadata; colisões, hurtboxes e attackboxes ficam no JSON lateral quando existirem.
 
-## 2. Script direto
+## Validação rápida
 
-`godot/import_pixel_art_metadata.gd` continua disponível para uso manual.
+Uma instalação válida deve cumprir estes passos sem erro:
 
-Configuração de importação da textura:
+1. **Pixel Art MCP** aparece e pode ser ativado sem erro de parser.
+2. **Listar assets da bridge** exibe ao menos o asset atual.
+3. **Exibir spritesheet do asset** mostra o preview no dock.
+4. **Importar asset** cria o PNG, o JSON e o `.tres` na pasta escolhida.
+5. Ao abrir o `.tres` no Inspector, as animações esperadas aparecem com FPS e loop corretos.
+6. Ao usar o recurso em um `AnimatedSprite2D`, a textura permanece nítida, sem interpolação visual.
 
-- Filter: Off
-- Mipmaps: Off
-- Repeat: Disabled
-- Compression: Lossless
+## Uso do SpriteFrames
+
+Adicione um `AnimatedSprite2D` à cena e arraste `<asset>_spriteframes.tres` para a propriedade **Sprite Frames**. Escolha a animação no Inspector ou por GDScript:
+
+```gdscript
+@onready var sprite: AnimatedSprite2D = $AnimatedSprite2D
+
+func _ready() -> void:
+    sprite.play("idle")
+```
+
+## Script manual
+
+`godot/import_pixel_art_metadata.gd` permanece disponível para fluxos manuais. Ao importar texturas sem o addon, configure:
+
+- Filter: Off;
+- Mipmaps: Off;
+- Repeat: Disabled;
+- Compression: Lossless.
+
+## Troubleshooting
+
+| Sintoma | Ação |
+| --- | --- |
+| Plugin não aparece | Confirme que `plugin.cfg` está exatamente em `res://addons/pixel_art_mcp/plugin.cfg` e reabra o projeto. |
+| Erro de parser ao ativar | Confirme que o projeto usa Godot 4.x e consulte o painel **Output**. |
+| `Bridge offline` | Inicie `npm run bridge` e confira URL/porta no dock. |
+| HTTP 401 | Preencha no dock o mesmo `PIXEL_BRIDGE_TOKEN` usado pela bridge. |
+| Lista de assets vazia | Abra o editor web, crie/confirme um asset e tente listar novamente. |
+| Arquivo já importado | Use **Reimportar (sobrescrever)** somente se quiser substituir a versão local. |
+| PNG existe, mas `.tres` não | Aguarde a importação do filesystem e procure erros de gravação/import no painel **Output**. |
