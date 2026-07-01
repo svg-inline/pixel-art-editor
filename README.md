@@ -1,5 +1,7 @@
 # Pixel ART 256x256 + MCP + Bridge + Godot/Unity
 
+[![CI](https://github.com/svg-inline/pixel-art-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/svg-inline/pixel-art-editor/actions/workflows/ci.yml)
+
 Editor web local-first para pixel art 256x256 com camadas, frames, spritesheets, preview animado, bridge HTTP/SSE, ferramentas MCP e exportação para Godot/Unity.
 
 Atalhos e gestos do editor: [docs/editor-shortcuts.md](docs/editor-shortcuts.md).
@@ -29,6 +31,19 @@ npm run pack:clean
 ```
 
 O arquivo final é criado em `release/pixel-art-mcp-<versao>.zip`. A pasta `release/` e arquivos `.zip` são ignorados pelo Git.
+
+## Qualidade e CI
+
+O workflow de CI usa Node.js 22 e uma instalação reproduzível com `npm ci`. Em pushes e pull requests, ele bloqueia regressões executando:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm run test:e2e
+```
+
+Os testes E2E usam o provider local de IA e não precisam de tokens ou chaves privadas. Se o Playwright falhar no CI, seus relatórios, screenshots, vídeos e traces ficam disponíveis como artefatos da execução.
 
 ## Rodar editor com integração em tempo real
 

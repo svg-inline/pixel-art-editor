@@ -3,7 +3,7 @@
 Prioridade: P1  
 Área: DevOps / Qualidade  
 Tipo: Automação  
-Status inicial: Backlog
+Status: Concluída
 
 ## Objetivo
 
@@ -27,31 +27,31 @@ A validação manual passou, mas isso precisa virar barreira automática. Sem CI
 
 ## Checklist
 
-- [ ] Criar workflow GitHub Actions para Node LTS compatível com o projeto.
-- [ ] Rodar instalação limpa via lockfile oficial.
-- [ ] Rodar `npm run typecheck`.
-- [ ] Rodar `npm test`.
-- [ ] Rodar `npm run build`.
-- [ ] Adicionar `npm run test:e2e` quando TASK-009 existir.
-- [ ] Cachear dependências sem mascarar instalação quebrada.
-- [ ] Publicar artefatos de falha do Playwright quando houver E2E.
-- [ ] Adicionar badge opcional no README.
+- [x] Criar workflow GitHub Actions para Node LTS compatível com o projeto.
+- [x] Rodar instalação limpa via lockfile oficial.
+- [x] Rodar `npm run typecheck`.
+- [x] Rodar `npm test`.
+- [x] Rodar `npm run build`.
+- [x] Adicionar `npm run test:e2e` quando TASK-009 existir.
+- [x] Cachear dependências sem mascarar instalação quebrada.
+- [x] Publicar artefatos de falha do Playwright quando houver E2E.
+- [x] Adicionar badge opcional no README.
 
 ## Critérios de aceite
 
-- [ ] Pull request falha se typecheck falhar.
-- [ ] Pull request falha se testes falharem.
-- [ ] Pull request falha se build falhar.
-- [ ] Pipeline usa o lockfile escolhido na TASK-002.
-- [ ] CI não depende de chaves privadas para testes básicos.
+- [x] Pull request falha se typecheck falhar.
+- [x] Pull request falha se testes falharem.
+- [x] Pull request falha se build falhar.
+- [x] Pipeline usa o lockfile escolhido na TASK-002.
+- [x] CI não depende de chaves privadas para testes básicos.
 
 ## O que não deve ser feito
 
-- [ ] Não colocar token de IA real no CI.
-- [ ] Não ignorar falha de teste com `continue-on-error`.
-- [ ] Não rodar build a partir de `dist` versionado.
-- [ ] Não usar duas versões de Node sem necessidade.
-- [ ] Não tornar E2E obrigatório antes de estabilizar TASK-009.
+- [x] Não colocar token de IA real no CI.
+- [x] Não ignorar falha de teste com `continue-on-error`.
+- [x] Não rodar build a partir de `dist` versionado.
+- [x] Não usar duas versões de Node sem necessidade.
+- [x] Não tornar E2E obrigatório antes de estabilizar TASK-009.
 
 ## Workflow mínimo sugerido
 
@@ -84,3 +84,13 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Resultado da validação
+
+Validação executada em 2026-06-30 com Node.js 22 e npm 10:
+
+- `npm run typecheck`: passou.
+- `npm test`: 99 testes passando.
+- `npm run build`: passou.
+- `npm run test:e2e`: 15 testes passando no Chromium headless.
+- Godot não foi alterado por esta tarefa.
