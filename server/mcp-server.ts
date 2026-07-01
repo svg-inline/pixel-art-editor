@@ -346,6 +346,7 @@ server.tool(
       fps,
       loop,
       pivot: { x: 128, y: 128 },
+      pivotExplicit: false,
       frames: [frame],
     };
     asset.animations.push(animation);

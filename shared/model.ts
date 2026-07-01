@@ -82,6 +82,8 @@ export type Animation = {
   loop: boolean;
   /** Default origin inherited by frames without an explicit pivot. */
   pivot: Point;
+  /** Distinguishes a configured origin from the legacy canvas-center fallback. */
+  pivotExplicit: boolean;
   frames: Frame[];
 };
 export type ExportProfile = {
@@ -89,6 +91,13 @@ export type ExportProfile = {
   name: string;
   engine: "godot" | "unity" | "generic";
   pixelsPerUnit?: number;
+  qaMode: "warning" | "block";
+  binaryAlpha: boolean;
+  maxColors: number;
+  minMargin: number;
+  centerTolerance: number;
+  requirePivot: boolean;
+  requiredBoxes: BoxKind[];
 };
 export type Asset = {
   id: string;
@@ -415,6 +424,8 @@ function normalizeAnimation(
     fps,
     loop: animation?.loop ?? fallbackGodot?.loop ?? true,
     pivot,
+    pivotExplicit:
+      animation?.pivotExplicit ?? Boolean(animation?.pivot || animation?.origin),
     frames: frames.map((frame: any, index: number) =>
       normalizeFrame(frame, index, pivot, Math.round(1000 / fps)),
     ),
@@ -459,10 +470,35 @@ function normalizeAsset(
             pixelsPerUnit: Number.isFinite(Number(profile?.pixelsPerUnit))
               ? Math.max(1, Number(profile.pixelsPerUnit))
               : SIZE,
+            qaMode: profile?.qaMode === "block" ? "block" : "warning",
+            binaryAlpha: profile?.binaryAlpha !== false,
+            maxColors: clamp(Math.round(Number(profile?.maxColors) || 32), 2, 256),
+            minMargin: clamp(Math.round(Number(profile?.minMargin) || 1), 0, 64),
+            centerTolerance: clamp(
+              Math.round(Number(profile?.centerTolerance) || 14),
+              0,
+              128,
+            ),
+            requirePivot: profile?.requirePivot !== false,
+            requiredBoxes: Array.isArray(profile?.requiredBoxes)
+              ? profile.requiredBoxes.filter((kind: unknown): kind is BoxKind =>
+                  kind === "hitbox" || kind === "hurtbox" || kind === "attackbox",
+                )
+              : [],
           }))
         : [
-            { id: uid(), name: "Godot", engine: "godot", pixelsPerUnit: SIZE },
-            { id: uid(), name: "Unity", engine: "unity", pixelsPerUnit: SIZE },
+            {
+              id: uid(), name: "Godot", engine: "godot", pixelsPerUnit: SIZE,
+              qaMode: "warning", binaryAlpha: true, maxColors: 32,
+              minMargin: 1, centerTolerance: 14, requirePivot: true,
+              requiredBoxes: [],
+            },
+            {
+              id: uid(), name: "Unity", engine: "unity", pixelsPerUnit: SIZE,
+              qaMode: "warning", binaryAlpha: true, maxColors: 32,
+              minMargin: 1, centerTolerance: 14, requirePivot: true,
+              requiredBoxes: [],
+            },
           ],
   };
 }

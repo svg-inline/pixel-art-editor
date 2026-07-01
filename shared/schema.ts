@@ -113,6 +113,7 @@ export const AnimationSchema = z.object({
   fps: z.number().int().min(1).max(60),
   loop: z.boolean(),
   pivot: PointSchema,
+  pivotExplicit: z.boolean(),
   frames: z.array(FrameSchema).min(1).max(64),
 });
 
@@ -123,6 +124,13 @@ export const ExportProfileSchema = z.object({
   name: z.string().min(1),
   engine: z.enum(["godot", "unity", "generic"]),
   pixelsPerUnit: z.number().positive().optional(),
+  qaMode: z.enum(["warning", "block"]),
+  binaryAlpha: z.boolean(),
+  maxColors: z.number().int().min(2).max(256),
+  minMargin: z.number().int().min(0).max(64),
+  centerTolerance: z.number().int().min(0).max(128),
+  requirePivot: z.boolean(),
+  requiredBoxes: z.array(BoxKindSchema),
 });
 
 // ─── Asset ────────────────────────────────────────────────────────────────────

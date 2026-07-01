@@ -1,7 +1,10 @@
+import { useState } from "react";
 import {
   activeAssetOf,
   atlasMetadata,
+  compareRenderedFrame,
   godotMetadata,
+  qualityReport,
   SIZE,
   slug,
   unityMetadata,
@@ -34,6 +37,40 @@ export function useExportActions({
   frame,
   frameIndex,
 }: UseExportActionsParams) {
+  const [exportQaStatus, setExportQaStatus] = useState<{
+    kind: string;
+    blocked: boolean;
+    message: string;
+    mismatchedPixels: number;
+  } | null>(null);
+
+  function preflight(kind: string, engine: "godot" | "unity" | "generic" = "godot") {
+    const asset = activeAssetOf(project);
+    const profile = asset.exportProfiles.find((item) => item.engine === engine) || asset.exportProfiles[0];
+    const report = qualityReport(project, profile);
+    const canvas = renderFrameFresh(frame, project.background);
+    const context = canvas.getContext("2d");
+    const parity = context
+      ? compareRenderedFrame(
+          frame,
+          project.background,
+          context.getImageData(0, 0, canvas.width, canvas.height).data,
+          canvas.width,
+          canvas.height,
+        )
+      : { matches: false, dimensionsMatch: false, mismatchedPixels: SIZE * SIZE };
+    const blocked = !parity.matches || !report.canExport;
+    const message = !parity.matches
+      ? `Export bloqueado: PNG diverge do projeto em ${parity.mismatchedPixels} pixel(s).`
+      : blocked
+        ? `Export bloqueado pelo perfil: ${report.errors.length} erro(s) de QA.`
+        : report.issues.length
+          ? `QA concluído: export permitido com ${report.issues.length} alerta(s).`
+          : "QA concluído: pixels do projeto e PNG são idênticos.";
+    setExportQaStatus({ kind, blocked, message, mismatchedPixels: parity.mismatchedPixels });
+    return !blocked;
+  }
+
   function recordExport(kind: string, filename: string, contentType: string) {
     void bridgeFetch("/api/export/event", {
       method: "POST",
@@ -43,6 +80,7 @@ export function useExportActions({
   }
 
   function exportPng() {
+    if (!preflight("PNG")) return;
     const filename = `${slug(project.godot.asset)}_${slug(project.godot.animation)}_f${frameIndex + 1}.png`;
     downloadCanvas(
       filename,
@@ -89,6 +127,7 @@ export function useExportActions({
   }
 
   function exportSpritesheet() {
+    if (!preflight("Spritesheet")) return;
     const filename = `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`;
     downloadCanvas(
       filename,
@@ -98,6 +137,7 @@ export function useExportActions({
   }
 
   async function exportWebp() {
+    if (!preflight("WebP")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}_sheet.webp`;
@@ -110,6 +150,7 @@ export function useExportActions({
   }
 
   function exportGif() {
+    if (!preflight("GIF")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.gif`;
@@ -122,6 +163,7 @@ export function useExportActions({
   }
 
   async function exportZip() {
+    if (!preflight("ZIP")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const zip = encodeZip([
@@ -145,6 +187,7 @@ export function useExportActions({
   }
 
   function exportAsepriteJson() {
+    if (!preflight("Aseprite JSON", "generic")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.aseprite.json`;
@@ -156,6 +199,7 @@ export function useExportActions({
   }
 
   function exportTilemapJson() {
+    if (!preflight("Tilemap JSON", "generic")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.tilemap.json`;
@@ -167,6 +211,7 @@ export function useExportActions({
   }
 
   function exportAtlasJson() {
+    if (!preflight("Atlas JSON")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.atlas.json`;
@@ -178,6 +223,7 @@ export function useExportActions({
   }
 
   function exportGodotJson() {
+    if (!preflight("Godot JSON", "godot")) return;
     const asset = slug(project.godot.asset);
     const filename = `${asset}.animations.json`;
     downloadText(
@@ -188,6 +234,7 @@ export function useExportActions({
   }
 
   function exportUnityJson() {
+    if (!preflight("Unity JSON", "unity")) return;
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
     const filename = `${asset}_${animation}.unity.json`;
@@ -216,5 +263,6 @@ export function useExportActions({
     exportGodotJson,
     exportUnityJson,
     saveJson,
+    exportQaStatus,
   };
 }

@@ -3,7 +3,7 @@
 Prioridade: P2  
 Área: QA / Exportação / Arte  
 Tipo: Qualidade visual  
-Status inicial: Backlog
+Status: Concluída em 2026-06-30
 
 ## Objetivo
 
@@ -29,26 +29,26 @@ O projeto já possui QA básico, mas editor profissional precisa detectar falso 
 
 ## Checklist
 
-- [ ] Detectar fundo quadriculado falso pintado como pixels reais.
-- [ ] Detectar alpha parcial quando preset exigir alpha binário.
-- [ ] Contar cores visíveis e comparar com limite configurado.
-- [ ] Calcular bounds do objeto por frame.
-- [ ] Avisar quando asset estiver descentralizado além de tolerância.
-- [ ] Avisar margem insuficiente para spritesheet/atlas.
-- [ ] Validar pivot/origin obrigatório para export de jogo.
-- [ ] Validar hitbox/hurtbox/attackbox quando perfil exigir.
-- [ ] Comparar projeto vs PNG exportado para evitar divergência.
-- [ ] Exibir relatório claro na UI antes do export.
-- [ ] Adicionar testes com PNG/projeto sintético.
+- [x] Detectar fundo quadriculado falso pintado como pixels reais.
+- [x] Detectar alpha parcial quando preset exigir alpha binário.
+- [x] Contar cores visíveis e comparar com limite configurado.
+- [x] Calcular bounds do objeto por frame.
+- [x] Avisar quando asset estiver descentralizado além de tolerância.
+- [x] Avisar margem insuficiente para spritesheet/atlas.
+- [x] Validar pivot/origin obrigatório para export de jogo.
+- [x] Validar hitbox/hurtbox/attackbox quando perfil exigir.
+- [x] Comparar projeto vs PNG exportado para evitar divergência.
+- [x] Exibir relatório claro na UI antes do export.
+- [x] Adicionar testes com PNG/projeto sintético.
 
 ## Critérios de aceite
 
-- [ ] QA detecta falso quadriculado em caso sintético.
-- [ ] QA informa transparência real e alpha parcial.
-- [ ] QA mostra número de cores visíveis por frame/asset.
-- [ ] Export pode bloquear ou alertar conforme perfil escolhido.
-- [ ] Relatório é compreensível para artista/desenvolvedor.
-- [ ] Testes cobrem pelo menos 6 validações.
+- [x] QA detecta falso quadriculado em caso sintético.
+- [x] QA informa transparência real e alpha parcial.
+- [x] QA mostra número de cores visíveis por frame/asset.
+- [x] Export pode bloquear ou alertar conforme perfil escolhido.
+- [x] Relatório é compreensível para artista/desenvolvedor.
+- [x] Testes cobrem pelo menos 6 validações.
 
 ## O que não deve ser feito
 
@@ -77,3 +77,25 @@ npm run build
 ```
 
 Se a task alterar Godot, validar também abrindo o projeto Godot com o addon ativo e registrando o comportamento esperado no README da task ou no PR.
+
+## Política implementada
+
+- Cada perfil Godot/Unity persiste `warning` ou `block`, limite de cores, alpha
+  binário, margem mínima, tolerância de centro, pivot e caixas obrigatórias.
+- Erros bloqueiam somente perfis em modo `block`; avisos nunca impedem o export.
+- Divergência de dimensão ou pixel entre o projeto composto e o buffer PNG
+  bloqueia o arquivo independentemente do modo, evitando pacote corrompido.
+- O relatório lista severidade, frame, causa e detalhe técnico, além de métricas
+  de transparência, alpha parcial, cores, bounds e margens.
+- O detector de falso quadriculado opera apenas nos pixels reais compostos e
+  exige padrão alternado de cores neutras; o checkerboard da UI não participa.
+
+## Validação executada
+
+Em 2026-06-30: `npm run typecheck`, `npm test` (99 testes), `npm run build` e
+`npm run test:e2e` (14 fluxos Chromium).
+
+O addon Godot não foi alterado. A compatibilidade foi revisada no consumidor
+existente: campos adicionais de QA ficam dentro de `export_profile`, enquanto
+`animations`, pivots, caixas, nearest filtering e caminhos `res://` permanecem
+inalterados; portanto não há projeto Godot executável novo a abrir nesta task.

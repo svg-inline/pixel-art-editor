@@ -2,7 +2,6 @@ import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
   RefObject,
-  WheelEvent as ReactWheelEvent,
 } from "react";
 
 type CanvasEditorProps = {
@@ -16,7 +15,6 @@ type CanvasEditorProps = {
   onPointerUp: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
   onPointerCancel: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
   onPointerLeave: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
-  onWheel: (event: ReactWheelEvent<HTMLCanvasElement>) => void;
 };
 
 export function CanvasEditor({
@@ -30,7 +28,6 @@ export function CanvasEditor({
   onPointerUp,
   onPointerCancel,
   onPointerLeave,
-  onWheel,
 }: CanvasEditorProps) {
   return (
     <section
@@ -55,7 +52,6 @@ export function CanvasEditor({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
         onPointerLeave={onPointerLeave}
-        onWheel={onWheel}
         onContextMenu={(event) => event.preventDefault()}
       />
     </section>

@@ -4,7 +4,6 @@ import type {
   PointerEvent as ReactPointerEvent,
   RefObject,
   SetStateAction,
-  WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   activeFrameOf,
@@ -233,6 +232,13 @@ export function useCanvasInput({
       window.removeEventListener("blur", releaseAll);
     };
   }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [zoom]);
 
   function scheduleCanvasRender() {
     if (canvasRafRef.current !== null) return;
@@ -578,11 +584,7 @@ export function useCanvasInput({
     );
   }
 
-  function getCell(
-    event:
-      | ReactPointerEvent<HTMLCanvasElement>
-      | ReactWheelEvent<HTMLCanvasElement>,
-  ): Point {
+  function getCell(event: ReactPointerEvent<HTMLCanvasElement>): Point {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return {
@@ -955,11 +957,11 @@ export function useCanvasInput({
     }
   }
 
-  function onWheel(event: ReactWheelEvent<HTMLCanvasElement>) {
-    event.preventDefault();
+  function onWheel(event: WheelEvent) {
     const stage = stageRef.current;
     const canvas = canvasRef.current;
     if (!stage || !canvas) return;
+    event.preventDefault();
     const direction = event.deltaY < 0 ? 1 : -1;
     const nextZoom = clamp(zoom + direction, 1, 16);
     if (nextZoom === zoom) return;
@@ -998,7 +1000,6 @@ export function useCanvasInput({
       onPointerUp,
       onPointerCancel: onPointerUp,
       onPointerLeave,
-      onWheel,
     },
   };
 }

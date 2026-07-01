@@ -164,6 +164,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         fps,
         loop,
         pivot: { x: 128, y: 128 },
+        pivotExplicit: false,
         frames: [blankFrame("Frame 1")],
       });
       const animations = [
@@ -177,8 +178,8 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         palette: [...draft.palette],
         animations,
         exportProfiles: [
-          { id: uid(), name: "Godot", engine: "godot" as const, pixelsPerUnit: 256 },
-          { id: uid(), name: "Unity", engine: "unity" as const, pixelsPerUnit: 256 },
+          { id: uid(), name: "Godot", engine: "godot" as const, pixelsPerUnit: 256, qaMode: "warning" as const, binaryAlpha: true, maxColors: 32, minMargin: 1, centerTolerance: 14, requirePivot: true, requiredBoxes: [] },
+          { id: uid(), name: "Unity", engine: "unity" as const, pixelsPerUnit: 256, qaMode: "warning" as const, binaryAlpha: true, maxColors: 32, minMargin: 1, centerTolerance: 14, requirePivot: true, requiredBoxes: [] },
         ],
       };
       draft.assets.push(asset);
@@ -204,6 +205,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         fps: draft.godot.fps,
         loop: draft.godot.loop,
         pivot: { ...activeAnimationOf(draft).pivot },
+        pivotExplicit: activeAnimationOf(draft).pivotExplicit,
         frames: [firstFrame],
       };
       asset.animations.push(animation);
@@ -214,23 +216,36 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
 
   function setAnimationPivot(axis: "x" | "y", value: number) {
     updateProject((draft) => {
-      activeAnimationOf(draft).pivot[axis] = Math.max(0, Math.min(255, value));
+      const animation = activeAnimationOf(draft);
+      animation.pivot[axis] = Math.max(0, Math.min(255, value));
+      animation.pivotExplicit = true;
     }, false);
   }
 
   function setExportProfileField(
     engine: ExportProfile["engine"],
-    key: "pixelsPerUnit",
-    value: number,
+    key: keyof Pick<ExportProfile, "pixelsPerUnit" | "qaMode" | "binaryAlpha" | "maxColors" | "minMargin" | "centerTolerance" | "requirePivot" | "requiredBoxes">,
+    value: number | boolean | string | BoxKind[],
   ) {
     updateProject((draft) => {
       const asset = activeAssetOf(draft);
       let profile = asset.exportProfiles.find((item) => item.engine === engine);
       if (!profile) {
-        profile = { id: uid(), name: engine, engine, pixelsPerUnit: 256 };
+        profile = {
+          id: uid(), name: engine, engine, pixelsPerUnit: 256,
+          qaMode: "warning", binaryAlpha: true, maxColors: 32,
+          minMargin: 1, centerTolerance: 14, requirePivot: true,
+          requiredBoxes: [],
+        };
         asset.exportProfiles.push(profile);
       }
-      profile[key] = Math.max(1, value || 1);
+      if (key === "pixelsPerUnit") profile.pixelsPerUnit = Math.max(1, Number(value) || 1);
+      else if (key === "maxColors") profile.maxColors = Math.max(2, Math.min(256, Number(value) || 2));
+      else if (key === "minMargin") profile.minMargin = Math.max(0, Math.min(64, Number(value) || 0));
+      else if (key === "centerTolerance") profile.centerTolerance = Math.max(0, Math.min(128, Number(value) || 0));
+      else if (key === "requiredBoxes") profile.requiredBoxes = value as BoxKind[];
+      else if (key === "qaMode") profile.qaMode = value === "block" ? "block" : "warning";
+      else profile[key] = Boolean(value);
     }, false);
   }
 

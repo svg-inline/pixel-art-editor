@@ -69,10 +69,15 @@ test("reports shared colors and QA warnings consistently", () => {
     ["#ffffff", 1],
   ]);
 
+  const projectPixels = project.frames[0].layers[0].pixels as (string | null)[];
+  projectPixels[indexOf(123, 120)] = "#dddddd";
+  projectPixels[indexOf(122, 121)] = "#dddddd";
+  projectPixels[indexOf(123, 121)] = "#ffffff";
+
   const report = qualityReport(project, 1);
-  assert.equal(report.colors, 2);
+  assert.equal(report.colors, 3);
   assert.equal(report.overLimit, true);
-  assert.equal(report.falseCheckerboardPixels, 1);
+  assert.equal(report.falseCheckerboardPixels, 4);
   assert.ok(report.warnings.includes("palette_over_limit"));
   assert.ok(report.warnings.includes("false_checkerboard_pixels"));
 });

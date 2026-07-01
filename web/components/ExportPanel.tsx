@@ -1,6 +1,6 @@
 import type { ChangeEvent } from "react";
 import { DIRECTIONS } from "../../shared/pixel-core.ts";
-import type { Project } from "../../shared/pixel-core.ts";
+import type { BoxKind, ExportProfile, Project, qualityReport } from "../../shared/pixel-core.ts";
 
 type ExportPanelProps = {
   project: Project;
@@ -12,10 +12,14 @@ type ExportPanelProps = {
   addAnimation: (name?: string) => void;
   setAnimationPivot: (axis: "x" | "y", value: number) => void;
   setExportProfileField: (
-    engine: "godot" | "unity" | "generic",
-    key: "pixelsPerUnit",
-    value: number,
+    engine: ExportProfile["engine"],
+    key: keyof Pick<ExportProfile, "pixelsPerUnit" | "qaMode" | "binaryAlpha" | "maxColors" | "minMargin" | "centerTolerance" | "requirePivot" | "requiredBoxes">,
+    value: number | boolean | string | BoxKind[],
   ) => void;
+  report: ReturnType<typeof qualityReport>;
+  qaEngine: ExportProfile["engine"];
+  setQaEngine: (engine: ExportProfile["engine"]) => void;
+  exportQaStatus: { kind: string; blocked: boolean; message: string; mismatchedPixels: number } | null;
   setGodotField: (
     key: keyof Project["godot"],
     value: Project["godot"][keyof Project["godot"]],
@@ -45,6 +49,10 @@ export function ExportPanel({
   setAnimationPivot,
   setExportProfileField,
   setGodotField,
+  report,
+  qaEngine,
+  setQaEngine,
+  exportQaStatus,
   exportPng,
   exportSpritesheet,
   exportGif,
@@ -58,6 +66,8 @@ export function ExportPanel({
   saveJson,
   loadJson,
 }: ExportPanelProps) {
+  const qaProfile = activeAsset.exportProfiles.find((item) => item.engine === qaEngine) || activeAsset.exportProfiles[0];
+  const boxKinds: BoxKind[] = ["hitbox", "hurtbox", "attackbox"];
   return (
     <>
       <h2>Godot / Unity</h2>
@@ -179,6 +189,46 @@ export function ExportPanel({
         />{" "}
         loop
       </label>
+      <section className="export-qa" aria-labelledby="export-qa-title">
+        <h3 id="export-qa-title">QA antes do export</h3>
+        <label>
+          Perfil{" "}
+          <select value={qaEngine} onChange={(event) => setQaEngine(event.target.value as ExportProfile["engine"])}>
+            {activeAsset.exportProfiles.map((profile) => (
+              <option key={profile.id} value={profile.engine}>{profile.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Política{" "}
+          <select value={qaProfile.qaMode} onChange={(event) => setExportProfileField(qaEngine, "qaMode", event.target.value)}>
+            <option value="warning">Avisar e permitir</option>
+            <option value="block">Bloquear em erro</option>
+          </select>
+        </label>
+        <div className="two-cols">
+          <label>Máx. cores <input type="number" min="2" max="256" value={qaProfile.maxColors} onChange={(event) => setExportProfileField(qaEngine, "maxColors", +event.target.value)} /></label>
+          <label>Margem mín. <input type="number" min="0" max="64" value={qaProfile.minMargin} onChange={(event) => setExportProfileField(qaEngine, "minMargin", +event.target.value)} /></label>
+          <label>Tolerância centro <input type="number" min="0" max="128" value={qaProfile.centerTolerance} onChange={(event) => setExportProfileField(qaEngine, "centerTolerance", +event.target.value)} /></label>
+        </div>
+        <label><input type="checkbox" checked={qaProfile.binaryAlpha} onChange={(event) => setExportProfileField(qaEngine, "binaryAlpha", event.target.checked)} /> exigir alpha binário</label>
+        <label><input type="checkbox" checked={qaProfile.requirePivot} onChange={(event) => setExportProfileField(qaEngine, "requirePivot", event.target.checked)} /> exigir pivot confirmado</label>
+        <fieldset>
+          <legend>Caixas obrigatórias por frame</legend>
+          {boxKinds.map((kind) => (
+            <label key={kind}><input type="checkbox" checked={qaProfile.requiredBoxes.includes(kind)} onChange={(event) => setExportProfileField(qaEngine, "requiredBoxes", event.target.checked ? [...qaProfile.requiredBoxes, kind] : qaProfile.requiredBoxes.filter((item) => item !== kind))} /> {kind}</label>
+          ))}
+        </fieldset>
+        <div className={`qa-summary ${report.errors.length ? "has-errors" : report.issues.length ? "has-warnings" : "is-ok"}`} role="status">
+          <strong>{report.errors.length} erro(s) · {report.warningsDetailed.length} aviso(s)</strong>
+          <span> · {report.assetFrames} frame(s) · até {report.colors} cor(es)</span>
+          <br />Transparência real: {report.hasRealTransparency ? "sim" : "não"} · alpha parcial: {report.partialAlphaPixels}
+          {report.issues.length ? (
+            <ul>{report.issues.slice(0, 12).map((issue, index) => <li key={`${issue.frameId}-${issue.code}-${index}`}><b>{issue.severity}</b> · {issue.frameName}: {issue.title} — {issue.detail}</li>)}</ul>
+          ) : <p>Nenhum problema técnico detectado.</p>}
+        </div>
+        {exportQaStatus ? <p className={exportQaStatus.blocked ? "export-status blocked" : "export-status passed"}>{exportQaStatus.kind}: {exportQaStatus.message}</p> : null}
+      </section>
       <button onClick={exportPng}>PNG frame</button>
       <button onClick={exportSpritesheet}>Spritesheet</button>
       <button onClick={exportGif}>GIF</button>

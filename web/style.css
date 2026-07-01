@@ -313,6 +313,40 @@ canvas {
   margin: 8px 0;
   background: #0f172a;
 }
+.export-qa {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 9px;
+  background: #0f172a;
+}
+.export-qa h3 {
+  margin: 0 0 8px;
+  color: #bfdbfe;
+}
+.export-qa fieldset {
+  border: 1px solid #334155;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.export-qa fieldset label {
+  display: inline-block;
+  margin-right: 8px;
+}
+.qa-summary {
+  border-left: 3px solid #22c55e;
+  padding: 8px;
+  margin-top: 8px;
+  background: #111827;
+  font-size: 12px;
+}
+.qa-summary.has-errors { border-left-color: #ef4444; }
+.qa-summary.has-warnings { border-left-color: #f59e0b; }
+.qa-summary ul { padding-left: 18px; margin: 7px 0 0; }
+.qa-summary li { margin: 4px 0; }
+.export-status { padding: 7px; border-radius: 6px; }
+.export-status.blocked { background: #450a0a; color: #fecaca; }
+.export-status.passed { background: #052e16; color: #bbf7d0; }
 .history-list .status {
   display: flex;
   align-items: center;

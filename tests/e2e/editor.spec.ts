@@ -85,6 +85,24 @@ test.describe("Editor carrega", () => {
 // ─── 2. Canvas — desenho de pixel ─────────────────────────────────────────────
 
 test.describe("Canvas", () => {
+  test("roda aplica zoom sem aviso de listener passivo", async ({ page }) => {
+    const passiveWarnings: string[] = [];
+    page.on("console", (message) => {
+      if (message.text().includes("Unable to preventDefault inside passive event listener"))
+        passiveWarnings.push(message.text());
+    });
+    const canvas = page.locator("section.stage canvas");
+    const before = Number(await canvas.getAttribute("width"));
+    const box = await canvas.boundingBox();
+    expect(box).toBeTruthy();
+
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.wheel(0, -100);
+
+    await expect.poll(async () => Number(await canvas.getAttribute("width"))).toBeGreaterThan(before);
+    expect(passiveWarnings).toEqual([]);
+  });
+
   test("clique no canvas dispara autosave na bridge", async ({ page }) => {
     const canvas = page.locator("section.stage canvas");
     await canvas.waitFor();
@@ -230,6 +248,16 @@ test.describe("Preview de IA (provider local, sem IA externa)", () => {
 // ─── 6. Exportação ────────────────────────────────────────────────────────────
 
 test.describe("Exportação", () => {
+  test("exibe relatório e bloqueia export quando o perfil exige QA sem erros", async ({ page }) => {
+    await expect(page.locator("#export-qa-title")).toHaveText("QA antes do export");
+    await expect(page.locator(".qa-summary")).toContainText("Frame vazio");
+
+    await page.getByLabel("Política").selectOption("block");
+    await page.locator("button", { hasText: "PNG frame" }).click();
+
+    await expect(page.locator(".export-status.blocked")).toContainText("Export bloqueado pelo perfil");
+  });
+
   test("exporta spritesheet PNG dispara download", async ({ page }) => {
     const download = page.waitForEvent("download", { timeout: 8_000 });
 
