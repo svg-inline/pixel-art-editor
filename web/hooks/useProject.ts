@@ -6,13 +6,20 @@ import {
   createProjectCommand,
   revertCommand,
   type HistoryCommand,
+  HISTORY_LIMIT,
   type HistoryCommandName,
 } from "../../shared/history.ts";
 import { cloneProject } from "../lib/editor-helpers.ts";
-import { loadLocalProjectSnapshot } from "../lib/local-project.ts";
+import {
+  loadLocalHistory,
+  loadLocalProjectSnapshot,
+  saveLocalHistory,
+} from "../lib/local-project.ts";
 import type { AutosaveStatus } from "../types.ts";
 
 export function useProject() {
+  const initialHistoryRef = useRef<ReturnType<typeof loadLocalHistory> | null>(null);
+  if (!initialHistoryRef.current) initialHistoryRef.current = loadLocalHistory();
   const [project, setProject] = useState<Project>(() =>
     normalizeProject(loadLocalProjectSnapshot()),
   );
@@ -20,8 +27,12 @@ export function useProject() {
   const dirtyRef = useRef(false);
   const lastSavedSnapshotRef = useRef<string | null>(null);
   const pendingSaveRevisionRef = useRef<number | null>(null);
-  const [history, setHistory] = useState<HistoryCommand[]>([]);
-  const [redo, setRedo] = useState<HistoryCommand[]>([]);
+  const [history, setHistory] = useState<HistoryCommand[]>(
+    () => initialHistoryRef.current?.history || [],
+  );
+  const [redo, setRedo] = useState<HistoryCommand[]>(
+    () => initialHistoryRef.current?.redo || [],
+  );
   const [autosaveStatus, setAutosaveStatus] =
     useState<AutosaveStatus>("idle");
   const [dirty, setDirty] = useState(false);
@@ -34,9 +45,14 @@ export function useProject() {
     dirtyRef.current = dirty;
   }, [dirty]);
 
+  useEffect(() => {
+    const timeout = setTimeout(() => saveLocalHistory({ history, redo }), 250);
+    return () => clearTimeout(timeout);
+  }, [history, redo]);
+
   function pushHistory(command: HistoryCommand | null) {
     if (!command) return;
-    setHistory((items) => [...items.slice(-99), command]);
+    setHistory((items) => [...items.slice(-(HISTORY_LIMIT - 1)), command]);
     setRedo([]);
   }
 
@@ -102,7 +118,7 @@ export function useProject() {
     if (!redo.length) return;
     markDirty();
     const command = redo[0];
-    setHistory((items) => [...items.slice(-99), command]);
+    setHistory((items) => [...items.slice(-(HISTORY_LIMIT - 1)), command]);
     const next = applyCommand(projectRef.current, command);
     projectRef.current = next;
     setProject(next);

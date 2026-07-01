@@ -15,6 +15,7 @@ import {
   tilemapMetadata,
 } from "../../shared/pro-export.ts";
 import { renderFrameFresh } from "../canvas-renderer.ts";
+import { bridgeFetch } from "../lib/bridge.ts";
 import {
   canvasBytes,
   downloadBytes,
@@ -33,11 +34,21 @@ export function useExportActions({
   frame,
   frameIndex,
 }: UseExportActionsParams) {
+  function recordExport(kind: string, filename: string, contentType: string) {
+    void bridgeFetch("/api/export/event", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind, filename, contentType }),
+    }).catch(() => undefined);
+  }
+
   function exportPng() {
+    const filename = `${slug(project.godot.asset)}_${slug(project.godot.animation)}_f${frameIndex + 1}.png`;
     downloadCanvas(
-      `${slug(project.godot.asset)}_${slug(project.godot.animation)}_f${frameIndex + 1}.png`,
+      filename,
       renderFrameFresh(frame, project.background),
     );
+    recordExport("png", filename, "image/png");
   }
 
   function spritesheetCanvas(projectInput: Project) {
@@ -78,30 +89,36 @@ export function useExportActions({
   }
 
   function exportSpritesheet() {
+    const filename = `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`;
     downloadCanvas(
-      `${slug(project.godot.asset)}_${slug(project.godot.animation)}_sheet.png`,
+      filename,
       spritesheetCanvas(project),
     );
+    recordExport("spritesheet", filename, "image/png");
   }
 
   async function exportWebp() {
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
+    const filename = `${asset}_${animation}_sheet.webp`;
     downloadBytes(
-      `${asset}_${animation}_sheet.webp`,
+      filename,
       await canvasBytes(spritesheetCanvas(project), "image/webp"),
       "image/webp",
     );
+    recordExport("webp", filename, "image/webp");
   }
 
   function exportGif() {
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
+    const filename = `${asset}_${animation}.gif`;
     downloadBytes(
-      `${asset}_${animation}.gif`,
+      filename,
       encodeGifFromProject(project),
       "image/gif",
     );
+    recordExport("gif", filename, "image/gif");
   }
 
   async function exportZip() {
@@ -122,55 +139,69 @@ export function useExportActions({
       },
       ...professionalMetadataFiles(project),
     ]);
-    downloadBytes(`${asset}_${animation}_export.zip`, zip, "application/zip");
+    const filename = `${asset}_${animation}_export.zip`;
+    downloadBytes(filename, zip, "application/zip");
+    recordExport("zip", filename, "application/zip");
   }
 
   function exportAsepriteJson() {
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
+    const filename = `${asset}_${animation}.aseprite.json`;
     downloadText(
-      `${asset}_${animation}.aseprite.json`,
+      filename,
       JSON.stringify(asepriteJson(project), null, 2),
     );
+    recordExport("aseprite", filename, "application/json");
   }
 
   function exportTilemapJson() {
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
+    const filename = `${asset}_${animation}.tilemap.json`;
     downloadText(
-      `${asset}_${animation}.tilemap.json`,
+      filename,
       JSON.stringify(tilemapMetadata(project), null, 2),
     );
+    recordExport("tilemap", filename, "application/json");
   }
 
   function exportAtlasJson() {
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
+    const filename = `${asset}_${animation}.atlas.json`;
     downloadText(
-      `${asset}_${animation}.atlas.json`,
+      filename,
       JSON.stringify(atlasMetadata(project), null, 2),
     );
+    recordExport("atlas", filename, "application/json");
   }
 
   function exportGodotJson() {
     const asset = slug(project.godot.asset);
+    const filename = `${asset}.animations.json`;
     downloadText(
-      `${asset}.animations.json`,
+      filename,
       JSON.stringify(godotMetadata(project), null, 2),
     );
+    recordExport("godot", filename, "application/json");
   }
 
   function exportUnityJson() {
     const asset = slug(project.godot.asset);
     const animation = slug(project.godot.animation);
+    const filename = `${asset}_${animation}.unity.json`;
     downloadText(
-      `${asset}_${animation}.unity.json`,
+      filename,
       JSON.stringify(unityMetadata(project), null, 2),
     );
+    recordExport("unity", filename, "application/json");
   }
 
   function saveJson() {
-    downloadText("pixel-project.json", JSON.stringify(project, null, 2));
+    const filename = "pixel-project.json";
+    downloadText(filename, JSON.stringify(project, null, 2));
+    recordExport("project", filename, "application/json");
   }
 
   return {

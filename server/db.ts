@@ -224,6 +224,13 @@ export class ProjectRepository {
       .filter(isHistoryCommand);
   }
 
+  recordHistory(command: HistoryCommand) {
+    this.ensureActiveProject();
+    if (!isHistoryCommand(command)) throw new Error("invalid_history_command");
+    this.insertHistory(ACTIVE_PROJECT_ID, command);
+    return command;
+  }
+
   addPendingDiff(input: PendingDiffInput): PendingProjectDiff {
     this.ensureActiveProject();
     const current = this.getProject();
@@ -320,6 +327,15 @@ export class ProjectRepository {
         JSON.stringify(input.warnings || []),
         input.error || null,
       );
+    this.db
+      .prepare(
+        `DELETE FROM ai_audit
+         WHERE project_id = ? AND id NOT IN (
+           SELECT id FROM ai_audit WHERE project_id = ?
+           ORDER BY at DESC LIMIT ?
+         )`,
+      )
+      .run(ACTIVE_PROJECT_ID, ACTIVE_PROJECT_ID, HISTORY_LIMIT);
     return { ...input, updatedAt } satisfies AiAuditEntry;
   }
 
@@ -401,6 +417,34 @@ export class ProjectRepository {
         JSON.stringify(data),
         now(),
       );
+    this.db
+      .prepare(
+        `DELETE FROM exports
+         WHERE project_id = ? AND id NOT IN (
+           SELECT id FROM exports WHERE project_id = ?
+           ORDER BY created_at DESC LIMIT ?
+         )`,
+      )
+      .run(ACTIVE_PROJECT_ID, ACTIVE_PROJECT_ID, HISTORY_LIMIT);
+  }
+
+  listExports() {
+    this.ensureActiveProject();
+    return this.db
+      .prepare(
+        `SELECT id, kind, filename, content_type, created_at
+         FROM exports
+         WHERE project_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(ACTIVE_PROJECT_ID, HISTORY_LIMIT) as Array<{
+      id: string;
+      kind: string;
+      filename: string;
+      content_type: string;
+      created_at: string;
+    }>;
   }
 
   exportJson() {
@@ -596,6 +640,17 @@ export class ProjectRepository {
         command.revisionBefore ?? null,
         command.revisionAfter ?? null,
       );
+    this.db
+      .prepare(
+        `DELETE FROM history
+         WHERE project_id = ? AND id NOT IN (
+           SELECT id FROM history
+           WHERE project_id = ?
+           ORDER BY at DESC
+           LIMIT ?
+         )`,
+      )
+      .run(projectId, projectId, HISTORY_LIMIT);
   }
 
   private historyFromRow(row: any): HistoryCommand {

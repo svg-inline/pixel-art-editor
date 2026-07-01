@@ -930,11 +930,11 @@ export function useCanvasInput({
     if (drawingRef.current) {
       const type =
         tool === "bucket"
-          ? "floodFill"
-          : tool === "pencil" || tool === "eraser"
-            ? paintGridCell && effectiveGridStep > 1
-              ? "drawRect"
-              : "setPixel"
+          ? "fill_area"
+          : tool === "pencil"
+            ? "draw_pixel"
+            : tool === "eraser"
+              ? "erase_pixel"
             : "project.change";
       commitHistory(strokeBeforeRef.current, projectRef.current, type, {
         tool,

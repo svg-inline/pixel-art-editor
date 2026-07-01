@@ -9,7 +9,11 @@ import {
   createProjectDiff,
   previewProjectDiff,
 } from "../shared/diff.ts";
-import { type HistoryCommandName } from "../shared/history.ts";
+import {
+  HISTORY_LIMIT,
+  summarizeHistoryPrompt,
+  type HistoryCommandName,
+} from "../shared/history.ts";
 import {
   activeAssetOf,
   activeFrameOf,
@@ -206,6 +210,11 @@ const GalleryPostSchema = z
     project: ProjectInputSchema.optional(),
   })
   .passthrough();
+const ExportEventSchema = z.object({
+  kind: z.string().min(1).max(64),
+  filename: z.string().min(1).max(255),
+  contentType: z.string().min(1).max(128),
+});
 const id = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 let writeQueue = Promise.resolve();
 const lastMtimeByPath = new Map<string, number>();
@@ -594,11 +603,11 @@ const server = http.createServer(async (req, res) => {
         applyProjectDiff(current, preview.diff),
         {
           expectedRevision: expectedRevisionFrom(data) ?? preview.baseRevision,
-          historyType: "mcp.diff",
+          historyType: "ai_preview_accept",
           historyParams: {
             tool: "ai-preview",
             operation: preview.operation,
-            prompt: preview.prompt,
+            promptSummary: summarizeHistoryPrompt(preview.prompt),
             provider: preview.provider,
             providerKind: preview.providerKind,
             model: preview.model,
@@ -606,7 +615,6 @@ const server = http.createServer(async (req, res) => {
             fallback: preview.fallback,
             previewId: preview.id,
             timestamp: preview.at,
-            diff: preview.diff,
             result: "accepted",
           },
           historySource: "bridge",
@@ -653,14 +661,13 @@ const server = http.createServer(async (req, res) => {
         {
           expectedRevision:
             expectedRevisionFrom(data) ?? pending.diff.baseRevision,
-          historyType: "mcp.diff",
+          historyType: "ai_preview_accept",
           historyParams: {
             ...(pending.command?.params || {}),
             tool: pending.command?.tool || "mcp",
-            prompt: pending.command?.prompt,
+            promptSummary: summarizeHistoryPrompt(pending.command?.prompt),
             timestamp: pending.command?.timestamp || pending.at,
             previewId: pending.id,
-            diff: pending.diff,
             summary: pending.summary,
           },
           historySource: pending.source || "mcp",
@@ -823,6 +830,16 @@ const server = http.createServer(async (req, res) => {
         `${asset}_sheet.png`,
       );
     }
+    if (url.pathname === "/api/export/event" && req.method === "POST") {
+      const data = parseBody(await body(req), ExportEventSchema);
+      repository.recordExport(
+        data.kind,
+        data.filename,
+        data.contentType,
+        { source: "web" },
+      );
+      return json(req, res, 200, { ok: true });
+    }
     if (url.pathname === "/api/export/godot" && req.method === "GET") {
       const data = godotMetadata(readProject());
       repository.recordExport(
@@ -891,7 +908,9 @@ const server = http.createServer(async (req, res) => {
         params: h.command.params || {},
         diff: h.command.params?.diff,
         tool: h.command.params?.tool,
-        prompt: h.command.params?.prompt,
+        prompt: summarizeHistoryPrompt(
+          h.command.params?.promptSummary || h.command.params?.prompt,
+        ),
         timestamp: h.command.params?.timestamp || h.at,
         result: h.command.params?.result,
       }));
@@ -912,19 +931,36 @@ const server = http.createServer(async (req, res) => {
         },
         diff: entry.diff,
         tool: entry.operation,
-        prompt: entry.prompt,
+        prompt: summarizeHistoryPrompt(entry.prompt),
         timestamp: entry.at,
         result: entry.result,
         provider: entry.provider,
         providerKind: entry.providerKind,
       }));
+      const exportHistory = repository.listExports().map((entry) => ({
+        id: `export:${entry.id}`,
+        at: entry.created_at,
+        command: "export_asset",
+        label: `Exportar ${entry.kind}`,
+        patches: 0,
+        pixelChanges: 0,
+        source: "bridge",
+        params: {
+          kind: entry.kind,
+          filename: entry.filename,
+          contentType: entry.content_type,
+        },
+        tool: "export_asset",
+        timestamp: entry.created_at,
+        result: "accepted",
+      }));
       return json(
         req,
         res,
         200,
-        [...aiHistory, ...projectHistory]
+        [...aiHistory, ...projectHistory, ...exportHistory]
           .sort((a, b) => String(b.at).localeCompare(String(a.at)))
-          .slice(0, 200),
+          .slice(0, HISTORY_LIMIT),
       );
     }
     // Per-asset Godot metadata — does NOT mutate the active asset

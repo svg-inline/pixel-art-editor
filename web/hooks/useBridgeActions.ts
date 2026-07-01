@@ -4,7 +4,10 @@ import {
   normalizeProject,
 } from "../../shared/pixel-core.ts";
 import type { Project, Selection } from "../../shared/pixel-core.ts";
-import type { HistoryCommandName } from "../../shared/history.ts";
+import {
+  summarizeHistoryPrompt,
+  type HistoryCommandName,
+} from "../../shared/history.ts";
 import { bridgeFetch } from "../lib/bridge.ts";
 import type {
   AiOperation,
@@ -283,10 +286,10 @@ export function useBridgeActions({
         commitHistory(
           before,
           next,
-          aiPreview.source === "mcp" ? "mcp.diff" : "project.change",
+          "ai_preview_accept",
           {
             operation: aiPreview.operation,
-            prompt: aiPreview.prompt,
+            promptSummary: summarizeHistoryPrompt(aiPreview.prompt),
             provider: aiPreview.provider,
             providerKind: aiPreview.providerKind,
           },
@@ -307,9 +310,9 @@ export function useBridgeActions({
       }
     }
     const next = normalizeProject(aiPreview.project);
-    commitHistory(before, next, "project.change", {
+    commitHistory(before, next, "ai_preview_accept", {
       operation: aiPreview.operation,
-      prompt: aiPreview.prompt,
+      promptSummary: summarizeHistoryPrompt(aiPreview.prompt),
       provider: aiPreview.provider,
       providerKind: aiPreview.providerKind,
       fallback: true,

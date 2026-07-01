@@ -5,7 +5,6 @@ import type {
   AiPreviewState,
   BridgeStatus,
   GalleryItem,
-  RemoteHistoryItem,
 } from "../types.ts";
 
 type AiPanelProps = {
@@ -25,8 +24,6 @@ type AiPanelProps = {
   aiPreviewRef: RefObject<HTMLCanvasElement | null>;
   acceptAiPreview: () => void;
   rejectAiPreview: () => void;
-  remoteHistory: RemoteHistoryItem[];
-  loadRemoteHistory: () => void;
   loadBackend: () => void;
   saveBackend: () => void;
   saveGallery: () => void;
@@ -52,8 +49,6 @@ export function AiPanel({
   aiPreviewRef,
   acceptAiPreview,
   rejectAiPreview,
-  remoteHistory,
-  loadRemoteHistory,
   loadBackend,
   saveBackend,
   saveGallery,
@@ -139,24 +134,6 @@ export function AiPanel({
           <button onClick={rejectAiPreview}>Rejeitar</button>
         </div>
       ) : null}
-      <div className="history-list">
-        <div className="status">
-          Histórico remoto <button onClick={loadRemoteHistory}>atualizar</button>
-        </div>
-        {remoteHistory.slice(0, 5).map((item) => (
-          <div key={item.id} className="history-item">
-            <b>{item.tool || item.command}</b>
-            <span>{new Date(item.timestamp || item.at).toLocaleString()}</span>
-            {item.prompt ? <em>{item.prompt}</em> : null}
-            <small>
-              {item.source || "bridge"} · {item.patches} patch(es) ·{" "}
-              {item.pixelChanges} px
-              {item.result ? ` · ${item.result}` : ""}
-              {item.provider ? ` · ${item.provider}` : ""}
-            </small>
-          </div>
-        ))}
-      </div>
       <button onClick={loadBackend}>Importar do MCP/bridge</button>
       <button onClick={saveBackend}>Salvar no backend</button>
       <button onClick={saveGallery}>Salvar na galeria</button>

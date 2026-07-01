@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import {
   activeFrameOf,
   activeLayerOf,
@@ -13,6 +14,10 @@ import {
   setPixel,
 } from "../shared/pixel-core.ts";
 import { ProjectRepository } from "../server/db.ts";
+import {
+  createSetPixelCommand,
+  HISTORY_LIMIT,
+} from "../shared/history.ts";
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "pixel-sqlite-"));
@@ -129,5 +134,35 @@ test("ProjectRepository audits AI preview accept and reject outcomes", () => {
     );
   } finally {
     repo.close();
+  }
+});
+
+test("ProjectRepository physically prunes history to the configured limit", () => {
+  const dir = tempDir();
+  const sqlitePath = path.join(dir, "editor.sqlite");
+  const repo = new ProjectRepository(sqlitePath);
+  try {
+    const project = repo.getProject();
+    const command = createSetPixelCommand(project, 0, 0, "#123456");
+    assert.ok(command);
+    for (let index = 0; index < HISTORY_LIMIT + 5; index++) {
+      repo.recordHistory({
+        ...command,
+        id: `history-${index}`,
+        at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      });
+    }
+    assert.equal(repo.listHistory().length, HISTORY_LIMIT);
+  } finally {
+    repo.close();
+  }
+  const db = new DatabaseSync(sqlitePath);
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS total FROM history").get() as {
+      total: number;
+    };
+    assert.equal(row.total, HISTORY_LIMIT);
+  } finally {
+    db.close();
   }
 });

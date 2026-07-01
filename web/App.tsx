@@ -14,6 +14,7 @@ import { CanvasEditor } from "./components/CanvasEditor.tsx";
 import { ExportPanel } from "./components/ExportPanel.tsx";
 import { EditorProductivityPanel } from "./components/EditorProductivityPanel.tsx";
 import { GameDataPanel } from "./components/GameDataPanel.tsx";
+import { HistoryPanel } from "./components/HistoryPanel.tsx";
 import { LayerPanel } from "./components/LayerPanel.tsx";
 import { PalettePanel } from "./components/PalettePanel.tsx";
 import { SelectionPanel } from "./components/SelectionPanel.tsx";
@@ -56,6 +57,8 @@ function App() {
     dirty,
     dirtyRef,
     setDirty,
+    history,
+    redo,
     autosaveStatus,
     setAutosaveStatus,
     lastSavedSnapshotRef,
@@ -326,8 +329,6 @@ function App() {
           aiPreviewRef={aiPreviewRef}
           acceptAiPreview={bridgeActions.acceptAiPreview}
           rejectAiPreview={bridgeActions.rejectAiPreview}
-          remoteHistory={remoteHistory}
-          loadRemoteHistory={bridgeActions.loadRemoteHistory}
           loadBackend={bridgeActions.loadBackend}
           saveBackend={bridgeActions.saveBackend}
           saveGallery={bridgeActions.saveGallery}
@@ -369,6 +370,16 @@ function App() {
       />
 
       <aside className="panel right">
+        <HistoryPanel
+          project={project}
+          history={history}
+          redo={redo}
+          undo={undo}
+          redoAction={redoAction}
+          remoteHistory={remoteHistory}
+          loadRemoteHistory={bridgeActions.loadRemoteHistory}
+        />
+
         <Timeline
           project={project}
           previewRef={previewRef}
@@ -424,8 +435,6 @@ function App() {
           mergeDown={projectActions.mergeDown}
           updateLayer={projectActions.updateLayer}
           updateProject={updateProject}
-          undo={undo}
-          redoAction={redoAction}
         />
       </aside>
     </main>

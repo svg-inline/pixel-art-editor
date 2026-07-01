@@ -84,7 +84,7 @@ export function useSelectionActions({
             if (clip.selected && !clip.selected[relativeIndex]) continue;
             setPixel(layer, clip.x + x, clip.y + y, null);
           }
-      });
+      }, true, "erase_pixel", { operation: "selection.cut" });
   }
 
   function pasteSelection() {
@@ -93,13 +93,17 @@ export function useSelectionActions({
       x: clipboard.x,
       y: clipboard.y,
     };
-    updateProject((draft) =>
-      pastePixels(
-        activeLayerOf(activeFrameOf(draft)),
-        clipboard,
-        bounds.x,
-        bounds.y,
-      ),
+    updateProject(
+      (draft) =>
+        pastePixels(
+          activeLayerOf(activeFrameOf(draft)),
+          clipboard,
+          bounds.x,
+          bounds.y,
+        ),
+      true,
+      "transform_selection",
+      { operation: "selection.paste" },
     );
     setSelection({
       x: bounds.x,
@@ -112,14 +116,18 @@ export function useSelectionActions({
   function moveSelection(dx: number, dy: number) {
     const clip = getSelectionPixels(activeLayerOf(frame), selection);
     if (!clip) return;
-    updateProject((draft) =>
-      pastePixels(
-        activeLayerOf(activeFrameOf(draft)),
-        clip,
-        clip.x + dx,
-        clip.y + dy,
-        true,
-      ),
+    updateProject(
+      (draft) =>
+        pastePixels(
+          activeLayerOf(activeFrameOf(draft)),
+          clip,
+          clip.x + dx,
+          clip.y + dy,
+          true,
+        ),
+      true,
+      "move_selection",
+      { dx, dy },
     );
     setSelection({
       x: clip.x + dx,
@@ -152,11 +160,16 @@ export function useSelectionActions({
         }
       nextClip = { ...clip, pixels, selected };
     }
-    updateProject((draft) => {
-      const layer = activeLayerOf(activeFrameOf(draft));
-      eraseClipPixels(layer, clip);
-      pastePixels(layer, nextClip, clip.x, clip.y);
-    });
+    updateProject(
+      (draft) => {
+        const layer = activeLayerOf(activeFrameOf(draft));
+        eraseClipPixels(layer, clip);
+        pastePixels(layer, nextClip, clip.x, clip.y);
+      },
+      true,
+      kind === "rotate90" ? "rotate_selection" : "transform_selection",
+      { operation: kind },
+    );
     setSelection({
       x: clip.x,
       y: clip.y,
@@ -212,7 +225,7 @@ export function useSelectionActions({
     readJsonFile(file).then((json) => {
       const before = projectRef.current;
       const next = normalizeProject(projectFromAsepriteJson(json) || json);
-      commitHistory(before, next, "project.replace", { source: "json" });
+      commitHistory(before, next, "import_asset", { source: "json" });
       markDirty();
       projectRef.current = next;
       setProject(next);

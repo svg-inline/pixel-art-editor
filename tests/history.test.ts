@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   activeFrameOf,
   activeLayerOf,
+  blankFrame,
+  blankLayer,
   expandPixels,
   expandProject,
   indexOf,
@@ -11,10 +13,12 @@ import {
   applyCommand,
   createDrawEllipseCommand,
   createDrawRectCommand,
+  createFloodFillCommand,
   createProjectCommand,
   createSetPixelCommand,
   isHistoryCommand,
   revertCommand,
+  summarizeHistoryPrompt,
 } from "../shared/history.ts";
 
 test("setPixel history command stores only changed pixels and is reversible", () => {
@@ -82,6 +86,99 @@ test("drawEllipse command records a compact pixel patch", () => {
   const after = applyCommand(before, command);
   assert.ok(
     expandPixels(activeLayerOf(activeFrameOf(after)).pixels).some(Boolean),
+  );
+});
+
+test("fill_area records every filled pixel and reverts it", () => {
+  const before = expandProject({});
+  const command = createFloodFillCommand(before, 0, 0, "#123456");
+
+  assert.ok(command);
+  assert.equal(command.patches[0].type, "pixels.changed");
+  const applied = applyCommand(before, command);
+  assert.equal(
+    expandPixels(activeLayerOf(activeFrameOf(applied)).pixels)[indexOf(255, 255)],
+    "#123456",
+  );
+  const reverted = revertCommand(applied, command);
+  assert.equal(
+    expandPixels(activeLayerOf(activeFrameOf(reverted)).pixels)[indexOf(255, 255)],
+    null,
+  );
+});
+
+test("layer add and metadata changes use reversible patches instead of project snapshots", () => {
+  const before = expandProject({});
+  const after = expandProject(before);
+  const frame = activeFrameOf(after);
+  const layer = blankLayer("Ink");
+  frame.layers.push(layer);
+  frame.activeLayerId = layer.id;
+
+  const command = createProjectCommand(before, after, "create_layer", {}, "test");
+
+  assert.ok(command);
+  assert.equal(command.patches.some((patch) => patch.type === "layer.added"), true);
+  assert.equal(command.patches.some((patch) => patch.type === "project.replaced"), false);
+  const applied = applyCommand(before, command);
+  assert.equal(activeFrameOf(applied).layers.at(-1)?.name, "Ink");
+  assert.equal(activeFrameOf(applied).activeLayerId, layer.id);
+  const reverted = revertCommand(applied, command);
+  assert.equal(activeFrameOf(reverted).layers.length, 1);
+  assert.equal(
+    activeFrameOf(reverted).activeLayerId,
+    activeFrameOf(before).activeLayerId,
+  );
+});
+
+test("frame add uses a compact reversible collection patch", () => {
+  const before = expandProject({});
+  const after = expandProject(before);
+  const frame = blankFrame("Impact");
+  after.frames.push(frame);
+  after.activeFrameId = frame.id;
+
+  const command = createProjectCommand(before, after, "create_frame", {}, "test");
+
+  assert.ok(command);
+  assert.equal(command.patches.some((patch) => patch.type === "frame.added"), true);
+  assert.equal(command.patches.some((patch) => patch.type === "project.replaced"), false);
+  const applied = applyCommand(before, command);
+  assert.equal(applied.frames.length, 2);
+  assert.equal(applied.activeFrameId, frame.id);
+  const reverted = revertCommand(applied, command);
+  assert.equal(reverted.frames.length, 1);
+  assert.equal(reverted.activeFrameId, before.activeFrameId);
+});
+
+test("accepted AI edit keeps provider and only a summarized prompt in patch history", () => {
+  const before = expandProject({});
+  const after = expandProject(before);
+  const prompt = "  crie   uma espada de prata com brilho azul  ".repeat(8);
+  const promptSummary = summarizeHistoryPrompt(prompt);
+  activeLayerOf(activeFrameOf(after)).pixels = expandPixels(
+    activeLayerOf(activeFrameOf(after)).pixels,
+  );
+  activeLayerOf(activeFrameOf(after)).pixels[indexOf(4, 4)] = "#60a5fa";
+
+  const command = createProjectCommand(
+    before,
+    after,
+    "ai_preview_accept",
+    { provider: "fake-ai", promptSummary },
+    "bridge",
+  );
+
+  assert.ok(command);
+  assert.equal(command.command.label, "Aceitar alteração de IA");
+  assert.equal(command.command.params?.provider, "fake-ai");
+  assert.ok(String(command.command.params?.promptSummary).length <= 120);
+  assert.equal(command.patches.some((patch) => patch.type === "pixels.changed"), true);
+  assert.equal(command.patches.some((patch) => patch.type === "project.replaced"), false);
+  const reverted = revertCommand(applyCommand(before, command), command);
+  assert.equal(
+    expandPixels(activeLayerOf(activeFrameOf(reverted)).pixels)[indexOf(4, 4)],
+    null,
   );
 });
 

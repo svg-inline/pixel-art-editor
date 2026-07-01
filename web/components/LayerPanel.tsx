@@ -10,8 +10,6 @@ type LayerPanelProps = {
   mergeDown: (index: number) => void;
   updateLayer: (index: number, mutator: (layer: Layer) => void) => void;
   updateProject: (mutator: (project: Project) => Project | void, saveHist?: boolean) => void;
-  undo: () => void;
-  redoAction: () => void;
 };
 
 export function LayerPanel({
@@ -23,15 +21,11 @@ export function LayerPanel({
   mergeDown,
   updateLayer,
   updateProject,
-  undo,
-  redoAction,
 }: LayerPanelProps) {
   return (
     <>
       <h2>Camadas</h2>
       <button type="button" onClick={addLayer}>+ camada</button>
-      <button type="button" onClick={undo}>Undo</button>
-      <button type="button" onClick={redoAction}>Redo</button>
       <button
         type="button"
         disabled={

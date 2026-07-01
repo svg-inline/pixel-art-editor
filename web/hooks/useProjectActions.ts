@@ -40,7 +40,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
       const layer = blankLayer(`Layer ${activeFrame.layers.length + 1}`);
       activeFrame.layers.push(layer);
       activeFrame.activeLayerId = layer.id;
-    }, true, "layer.add");
+    }, true, "create_layer");
   }
 
   function removeLayer(id: string) {
@@ -50,7 +50,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
       if (activeFrame.layers.find((layer) => layer.id === id)?.locked) return;
       activeFrame.layers = activeFrame.layers.filter((layer) => layer.id !== id);
       activeFrame.activeLayerId = activeFrame.layers[0].id;
-    }, true, "layer.remove", { layerId: id });
+    }, true, "delete_layer", { layerId: id });
   }
 
   function moveLayer(index: number, direction: number) {
@@ -62,7 +62,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         activeFrame.layers[targetIndex],
         activeFrame.layers[index],
       ];
-    }, true, "project.change", {
+    }, true, "layer_change", {
       operation: "layer.move",
       from: index,
       to: index + direction,
@@ -75,7 +75,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         mergeLayerDown(activeFrameOf(draft), index);
       },
       true,
-      "project.change",
+      "layer_change",
       { operation: "layer.mergeDown", index },
     );
   }
@@ -84,13 +84,17 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
     updateProject((draft) => {
       const activeFrame = activeFrameOf(draft);
       mutator(activeFrame.layers[index]);
-    }, false);
+    }, true, "layer_change", { operation: "layer.update", index });
   }
 
   function updateActiveFrame(mutator: (frame: Frame) => void) {
-    updateProject((draft) => {
-      mutator(activeFrameOf(draft));
-    });
+    updateProject(
+      (draft) => {
+        mutator(activeFrameOf(draft));
+      },
+      true,
+      "frame_change",
+    );
   }
 
   function resizeCanvasContent(width: number, height: number) {
@@ -257,7 +261,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
       const nextFrame = blankFrame(`Frame ${draft.frames.length + 1}`);
       draft.frames.push(nextFrame);
       draft.activeFrameId = nextFrame.id;
-    }, true, "frame.add");
+    }, true, "create_frame");
   }
 
   function duplicateFrame() {
@@ -269,7 +273,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
       duplicated.activeLayerId = duplicated.layers[0].id;
       draft.frames.splice(activeFrameIndex(draft) + 1, 0, duplicated);
       draft.activeFrameId = duplicated.id;
-    }, true, "frame.duplicate");
+    }, true, "create_frame", { operation: "frame.duplicate" });
   }
 
   function removeFrame(id: string) {
@@ -277,7 +281,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
       if (draft.frames.length === 1) return;
       draft.frames = draft.frames.filter((item) => item.id !== id);
       draft.activeFrameId = draft.frames[0].id;
-    }, true, "frame.remove", { frameId: id });
+    }, true, "delete_frame", { frameId: id });
   }
 
   function moveFrame(index: number, direction: number) {
@@ -288,7 +292,7 @@ export function useProjectActions({ updateProject }: UseProjectActionsParams) {
         draft.frames[targetIndex],
         draft.frames[index],
       ];
-    }, true, "frame.move", { from: index, to: index + direction });
+    }, true, "frame_change", { operation: "frame.move", from: index, to: index + direction });
   }
 
   return {

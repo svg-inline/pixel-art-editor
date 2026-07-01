@@ -169,9 +169,33 @@ export function createProjectDiff(
   );
   if (!historyCommand) return null;
   let operations = historyCommand.patches as ProjectDiffOperation[];
-  if (operations.some((operation) => operation.type === "project.replaced")) {
+  const diffOperationTypes = new Set([
+    "pixels.changed",
+    "layer.added",
+    "layer.removed",
+    "frame.updated",
+    "project.settings.changed",
+    "frames.replaced",
+    "asset.animations.replaced",
+    "project.replaced",
+  ]);
+  if (
+    operations.some(
+      (operation) =>
+        operation.type === "project.replaced" ||
+        !diffOperationTypes.has(operation.type),
+    )
+  ) {
     const structuredOperations = createStructuredOperations(before, after);
-    if (structuredOperations.length) operations = structuredOperations;
+    operations = structuredOperations.length
+      ? structuredOperations
+      : [
+          {
+            type: "project.replaced",
+            before: compactProject(before),
+            after: compactProject(after),
+          },
+        ];
   }
   return {
     format: "pixel-art-project-diff-v1",

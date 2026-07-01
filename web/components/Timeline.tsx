@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import { clamp } from "../../shared/pixel-core.ts";
 import type { Project } from "../../shared/pixel-core.ts";
+import type { HistoryCommandName } from "../../shared/history.ts";
 import { FrameThumbnail } from "./FrameThumbnail.tsx";
 
 type TimelineProps = {
@@ -16,7 +17,12 @@ type TimelineProps = {
   duplicateFrame: () => void;
   moveFrame: (index: number, direction: number) => void;
   removeFrame: (id: string) => void;
-  updateProject: (mutator: (project: Project) => Project | void, saveHist?: boolean) => void;
+  updateProject: (
+    mutator: (project: Project) => Project | void,
+    saveHist?: boolean,
+    historyType?: HistoryCommandName,
+    params?: Record<string, unknown>,
+  ) => void;
 };
 
 export function Timeline({
@@ -63,7 +69,7 @@ export function Timeline({
               onChange={(event) =>
                 updateProject((draft) => {
                   draft.frames[index].name = event.target.value;
-                }, false)
+                }, true, "frame_change", { operation: "frame.rename", frameId: frame.id })
               }
             />
             <input
@@ -74,15 +80,20 @@ export function Timeline({
               title="Duração em ms"
               onClick={(event) => event.stopPropagation()}
               onChange={(event) =>
-                updateProject((draft) => {
-                  const durationMs = clamp(
-                    +event.target.value || 1,
-                    1,
-                    5000,
-                  );
-                  draft.frames[index].durationMs = durationMs;
-                  draft.frames[index].duration = durationMs;
-                })
+                updateProject(
+                  (draft) => {
+                    const durationMs = clamp(
+                      +event.target.value || 1,
+                      1,
+                      5000,
+                    );
+                    draft.frames[index].durationMs = durationMs;
+                    draft.frames[index].duration = durationMs;
+                  },
+                  true,
+                  "frame_change",
+                  { operation: "frame.duration", frameId: frame.id },
+                )
               }
             />
             <button
